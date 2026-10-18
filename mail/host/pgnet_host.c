@@ -1,4 +1,5 @@
-/* pgnet_host.c - PC stand-in for the parts of ssh/psiglue.cpp PsiMail uses:
+/* pgnet_host.c - PC stand-in for the parts of ssh/psiglue.cpp the engines use
+ * (PsiMail's host build and the host tests of the programs built on pwnet.c):
  * pg_dial opens a TCP connection to pg_shared()->host:port (like the Psion's
  * own TCP/IP mode). PM_MODEM=1 adds a fake "NO CARRIER" on close, as the
  * WiRSa does. */
@@ -11,7 +12,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 
-#include "../psimail.h"
+#include "../../ssh/psishared.h"
 
 PsiShared *pg_shared(void);
 

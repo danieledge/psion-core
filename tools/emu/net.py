@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""tools/emu/net.py - end-to-end network tests in the 5mx emulator.
+"""core/tools/emu/net.py - end-to-end network tests in the 5mx emulator.
 
-    python3 tools/emu/net.py [at|web|mail|ssh|proxy|browse|update|all ...] [--keep]
+    python3 core/tools/emu/net.py [at|web|mail|ssh|proxy|browse|update|all ...] [--keep]
 
-For each test it starts a host modem (firmware/atom-modem's hostmodem) on a
+Run it from a program's checkout (psiterm, psimail, psiweb...), which has
+psion-core as its core/ submodule, or set PSION_APP to one. The other
+programs' files, the modem firmware (psiconnect) and PsiTerm's test server
+are looked for in their checkouts beside it (PSICONNECT and PSITERM name
+them when they are elsewhere).
+
+For each test it starts a host modem (psiconnect's hosttest/hostmodem) on a
 unix socket, the local server the app should reach, builds a card with the
 app, boots the emulator with its serial port (COMM::0 = UART2) bridged to the
 modem (tools/emu/run.sh with EMU_SERIAL, which also switches the Remote link
@@ -16,11 +22,11 @@ build/emu/net/<test>/ (end.png is the last frame).
   ssh   PsiTerm: imports a throwaway key from the card (D:\\PSIKEY) and
         logs in to a throwaway sshd on 127.0.0.1 (key login only)
   proxy PsiWeb with Preferences > Use a proxy: psiproxy, 8080 - the modem's
-        own web proxy (firmware/atom-modem/src/proxy.cpp) - opens a real
+        own web proxy (psiconnect's src/proxy.cpp) - opens a real
         site (EMU_PROXY_URL, default news.ycombinator.com: http:// that
         moves to https://, so the modem does the TLS). Needs the Internet;
         not part of "all".
-  (and any local tests in tools/emu/local/, see LOCAL below)
+  (and the program's own tests in its test/emu/*.net.py, see LOCAL below)
 
 Every server listens on 127.0.0.1 only, and every process it starts is
 stopped at the end (it never kills anything it did not start). The sshd
@@ -31,7 +37,8 @@ so the addresses typed on the Psion can be short.
 
   EMU_NET_DIR   work folder (default build/emu/net)
   EMU_PKG_TERM, EMU_PKG_MAIL, EMU_PKG_WEB  app files (default: pkg/,
-                build/mail-pkg/, build/web-pkg/, as mkcard.ts)
+                build/mail-pkg/, build/web-pkg/ in this checkout or the
+                program's beside it, as mkcard.ts)
   EMU_RETRIES   runs a failed test again this many times (default 1)
   EMU_PROXY_URL the address the proxy test types (default news.ycombinator.com)
   --keep        leave the test keys in the work folder (logs and
@@ -39,11 +46,22 @@ so the addresses typed on the Psion can be short.
 """
 import os, sys, time, shutil, socket, subprocess, tempfile, getpass
 
-TOP = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
+CORE = os.path.abspath(os.path.join(HERE, '..', '..'))
+REPO = os.path.abspath(os.environ.get('PSION_APP') or os.path.join(CORE, '..'))   # the program's checkout
 WORK = os.path.abspath(os.environ.get('EMU_NET_DIR', os.path.join(REPO, 'build', 'emu', 'net')))
-HOSTMODEM_DIR = os.path.join(REPO, 'firmware', 'atom-modem', 'hosttest')
+
+
+def sibling(env, name, probe):
+    """A checkout beside this one (or $env): this one if it has the probe file."""
+    for d in [os.environ.get(env), REPO, os.path.join(REPO, '..', name)]:
+        if d and os.path.exists(os.path.join(d, probe)):
+            return os.path.abspath(d)
+    return os.path.abspath(os.path.join(REPO, '..', name))
+
+
+TOP = sibling('PSITERM', 'psiterm', os.path.join('ssh', 'test', 'chunksrv.py'))        # PsiTerm's checkout
+HOSTMODEM_DIR = os.path.join(sibling('PSICONNECT', 'psiconnect', os.path.join('hosttest', 'hostmodem.cpp')), 'hosttest')
 
 # ----- keys -------------------------------------------------------------------
 # EStdKey codes, and how the 5mx's UK keyboard makes each character: a
@@ -429,42 +447,6 @@ def test_update(ctx):
     return ok, out
 
 
-# PsiKernTest's Write > Serial link with the modem (experimental/kernel): the
-# dialogue with each modem. (The bridge has no baud rate, and the emulator
-# doesn't model UBRCR, so the speed itself is only tested on the 5mx.)
-def kern_serial(ctx, name, modem_log, secs=50):
-    card = os.path.join(WORK, 'kern.img')
-    make_card('psikern', card, 'EMU_PKG_KERN')
-    # PsiKernTest from the Extras bar; Menu, Right twice to Write, Down four
-    # times to "Serial link with the modem", Enter, then Yes to the question
-    s = Script(46).tap(335, 215).at(54).key(148).key(15).key(15)
-    s.key(17).key(17).key(17).key(17).key(ENTER).wait(5).key(ord('Y'))
-    return emulate(name, card, ctx.sock, s, secs=secs)
-
-
-def test_kern(ctx):
-    log = ctx.modem('kern')
-    out = kern_serial(ctx, 'kern', log)
-    # (hostmodem logs what it sends: ATI's first line, ten times at each speed)
-    try:
-        n = open(log, 'rb').read().count(b'PsiConnect 2.')
-    except OSError:
-        n = 0
-    return n >= 20, out
-
-
-def test_kernwirsa(ctx):
-    log = ctx.wirsa('kernwirsa', 'stock')
-    out = kern_serial(ctx, 'kernwirsa', log)
-    return grep(log, "AT$SB=230400 -> b'ERROR'") and grep(log, "ATI -> "), out
-
-
-def test_kernwirsafast(ctx):
-    log = ctx.wirsa('kernwirsafast', 'fast')
-    out = kern_serial(ctx, 'kernwirsafast', log, secs=100)    # (two 5 s switches)
-    return grep(log, 'AT$SB=230400 -> switching') and grep(log, 'AT$SB=115200 -> switching'), out
-
-
 # PsiTerm's Get file (0.91: the file view, which lists folders in place).
 # A folder tree for SFTP (sftp-server starts in it): the file view opens at
 # once with "Opening folder..."; a folder is opened, made a favourite, Up
@@ -559,19 +541,20 @@ def test_browse(ctx):
 
 
 TESTS = {'browse': test_browse, 'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
-         'update': test_update, 'kern': test_kern, 'kernwirsa': test_kernwirsa, 'kernwirsafast': test_kernwirsafast}
+         'update': test_update}
 ALL = ['at', 'web', 'mail', 'ssh']             # (proxy needs the Internet: asked for by name)
 
-# Local tests (tools/emu/local/*.net.py, not part of the repository): each
-# runs with this file's names (Script, make_card, emulate, grep...) and adds
-# its own to TESTS. Asked for by name; never part of "all".
-LOCAL = os.path.join(HERE, 'local')
-if os.path.isdir(LOCAL):
-    for _n in sorted(os.listdir(LOCAL)):
-        if _n.endswith('.net.py'):
-            _p = os.path.join(LOCAL, _n)
-            with open(_p) as _f:
-                exec(compile(_f.read(), _p, 'exec'), globals())
+# A program's own tests (test/emu/*.net.py in its checkout; and, for local
+# additions, core/tools/emu/local/): each runs with this file's names (Script,
+# make_card, emulate, grep, REPO, CORE...) and adds its own to TESTS. Asked
+# for by name; never part of "all".
+for LOCAL in (os.path.join(REPO, 'test', 'emu'), os.path.join(HERE, 'local')):
+    if os.path.isdir(LOCAL):
+        for _n in sorted(os.listdir(LOCAL)):
+            if _n.endswith('.net.py'):
+                _p = os.path.join(LOCAL, _n)
+                with open(_p) as _f:
+                    exec(compile(_f.read(), _p, 'exec'), globals())
 
 
 def main():

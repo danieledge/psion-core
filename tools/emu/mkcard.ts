@@ -1,21 +1,28 @@
-// tools/emu/mkcard.ts - builds a CF card image for the emulator from this
-// checkout's build output.
-//   node --experimental-strip-types tools/emu/mkcard.ts psimail [--seed] [out.img]
-//   node --experimental-strip-types tools/emu/mkcard.ts psiterm|psiweb [out.img]
+// core/tools/emu/mkcard.ts - builds a CF card image for the emulator from a
+// program's build output. Run it from the program's checkout (psiterm,
+// psimail, psiweb...), which has psion-core as its core/ submodule:
+//   node --experimental-strip-types core/tools/emu/mkcard.ts psimail [--seed] [out.img]
+//   node --experimental-strip-types core/tools/emu/mkcard.ts psiterm|psiweb [out.img]
 // Options: --file CARDPATH=HOSTFILE adds a file, 8.3 names only (e.g. --file
 // PSIKEY=id_ed25519 for PsiTerm's key Import); EMU_PKG=DIR takes the app's
 // files from DIR instead of pkg/, build/mail-pkg/ or build/web-pkg/.
-// Default output: build/emu/card.img. Needs $PSION_EMU (the psionEmulators
-// checkout; default ../psionEmulators next to this repo) for its FAT16 writer.
-// --seed adds a mailbox and calendar for PsiMail's TESTSEED (tools/emu/seed.py).
-// Local card makers (tools/emu/local/*.card.ts, not part of the repository)
-// add other names: each exports cards = { name: (c) => void }, c holding
-// w(cardpath, data), f(hostfile), t(text), pkg(defaultdir) and REPO.
+// Default output: build/emu/card.img in the program's checkout. Needs
+// $PSION_EMU (the psionEmulators checkout; default ../psionEmulators beside
+// the program's checkout) for its FAT16 writer.
+// The program's checkout is PSION_APP, else the folder above this core
+// checkout. Another program's files (psiterm's pkg/ from the psimail
+// checkout, say) are looked for in that program's checkout beside it.
+// --seed adds a mailbox and calendar for PsiMail's TESTSEED (core/tools/emu/seed.py).
+// A program's own card makers (test/emu/*.card.ts in its checkout) add
+// other names: each exports cards = { name: (c) => void }, c holding
+// w(cardpath, data), f(hostfile), t(text), pkg(defaultdir), REPO (the
+// program's checkout) and CORE.
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url)) + '/';
-const REPO = resolve(HERE, '../..') + '/';
+const CORE = resolve(HERE, '../..') + '/';
+const REPO = (process.env.PSION_APP ? resolve(process.env.PSION_APP) : resolve(CORE, '..')) + '/';
 const EMU = process.env.PSION_EMU || resolve(REPO, '../psionEmulators');
 const { createBlankImage, writeFileAtPath } = await import(EMU + '/frontend/src/lib/fat16.ts');
 const args = process.argv.slice(2);
@@ -26,38 +33,39 @@ for (let i = 1; i < args.length; i++)
 	if (args[i] === '--file') { const [d, ...r] = args[i + 1].split('='); extra.push([d, r.join('=')]); args.splice(i, 2); i--; }
 const out = args.find((x, i) => i > 0 && x !== '--seed') || REPO + 'build/emu/card.img';
 const pkg = (dflt: string) => process.env.EMU_PKG ? resolve(process.env.EMU_PKG) + '/' : dflt;
+// a program's package folder: in this checkout, else in that program's checkout beside it
+const pkgOf = (repo: string, rel: string, probe: string) => {
+	for (const d of [REPO + rel, resolve(REPO, '../' + repo) + '/' + rel])
+		if (existsSync(d + probe)) return d;
+	return REPO + rel;
+};
 const img = createBlankImage(16*1024*1024);
 const w = (p: string, d: Uint8Array) => { const r = writeFileAtPath(img, p, d); if (!r.ok) throw new Error(p + ': ' + r.reason); };
 const t = (s: string) => new Uint8Array(Buffer.from(s, 'latin1'));
 const f = (p: string) => new Uint8Array(readFileSync(p));
 const local: Record<string, (c: any) => void> = {};
-if (existsSync(HERE + 'local/'))
-	for (const n of readdirSync(HERE + 'local/').filter(n => n.endsWith('.card.ts')).sort())
-		Object.assign(local, (await import(HERE + 'local/' + n)).cards || {});
+for (const dir of [REPO + 'test/emu/', HERE + 'local/'])
+	if (existsSync(dir))
+		for (const n of readdirSync(dir).filter(n => n.endsWith('.card.ts')).sort())
+			Object.assign(local, (await import(dir + n)).cards || {});
 w('PAD.BIN', new Uint8Array(Number(process.env.EMU_PAD || 9000)));   // (shifts the layout: the harness's CF emulation can wedge on some)
 w('SYSTEM/LIBS/ESTLIB.DLL', f(HERE + 'ESTLIB.DLL'));   // the EPOC C library (from the SDK's redistributable stdlib.sis)
 if (app === 'psimail') {
-	const P = pkg(REPO + 'build/mail-pkg/');
+	const P = pkg(pkgOf('psimail', 'build/mail-pkg/', 'psimail.app'));
 	for (const n of ['psimail.app','psimail.rsc','psimail.exe','psimail.aif','psimail.mbm','pmbutton.exe'])
 		w('SYSTEM/APPS/PSIMAIL/' + n.toUpperCase(), f(P + n));
 } else if (app === 'psiterm') {
-	const P = pkg(REPO + 'pkg/');
+	const P = pkg(pkgOf('psiterm', 'pkg/', 'psiterm.app'));
 	for (const n of ['psiterm.app','psiterm.rsc','psissh.exe','psiterm.aif','psiterm.gdr','psiterm.mbm'])
 		w('SYSTEM/APPS/PSITERM/' + n.toUpperCase(), f(P + n));
 } else if (app === 'psiweb') {
-	const P = pkg(REPO + 'build/web-pkg/');
+	const P = pkg(pkgOf('psiweb', 'build/web-pkg/', 'psiweb.app'));
 	for (const n of ['psiweb.app','psiweb.rsc','psiweb.exe','psiweb.aif','psiweb.mbm'])
 		w('SYSTEM/APPS/PSIWEB/' + n.toUpperCase(), f(P + n));
-} else if (app === 'psikern') {
-	// experimental/kernel: the test harness and the driver (never released)
-	const P = pkg(REPO + 'build/kernel-pkg/');
-	w('SYSTEM/APPS/PSIKT/PSIKT.APP', f(P + 'psikt.app'));
-	w('SYSTEM/APPS/PSIKT/PSIKT.RSC', f(P + 'psikt.rsc'));
-	w('SYSTEM/LIBS/PSIKERN6.LDD', f(P + 'psikern.ldd'));
 } else if (local[app]) {
-	local[app]({ w, f, t, pkg, REPO });
+	local[app]({ w, f, t, pkg, REPO, CORE });
 } else {
-	console.error('usage: mkcard.ts ' + ['psimail', 'psiterm', 'psiweb', 'psikern', ...Object.keys(local)].join('|') + ' [--seed] [out.img]'); process.exit(1);
+	console.error('usage: mkcard.ts ' + ['psimail', 'psiterm', 'psiweb', ...Object.keys(local)].join('|') + ' [--seed] [out.img]'); process.exit(1);
 }
 if (seedOn) {
 	const A = 'SEEDA0/';    // (TESTSEED copies it to C:\PsiMail\A0)

@@ -1,9 +1,13 @@
-# tools/emu/seed.py on|off - adds or removes PsiMail's TESTSEED block (an
+# core/tools/emu/seed.py on|off - adds or removes PsiMail's TESTSEED block (an
 # offline Example account, mail copied from the card's SEED folders). Emulator
-# only: it must never be committed (grep TESTSEED mail/app/psimail.cpp).
+# only: it must never be committed (grep TESTSEED app/psimail.cpp). Run from
+# the psimail checkout, which has core as its core/ submodule (or set
+# PSION_APP to it).
 import sys
 import os
-p=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'mail', 'app', 'psimail.cpp'); s=open(p).read()
+core=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+app=os.environ.get('PSION_APP') or os.path.dirname(core)
+p=os.path.join(app, 'app', 'psimail.cpp'); s=open(p).read()
 SEED='''	// TESTSEED (emulator only - remove before release)
 	if (!iSettings.iAccounts[0].used)
 		{

@@ -1,45 +1,55 @@
 # Emulator testing
 
 These scripts run the Psion apps in the
-[psionEmulators](https://github.com/joehaines/psionEmulators) harness. They
-expect that repository next to this one, at `../psionEmulators`, or wherever
-`$PSION_EMU` points. Build its native harness once with
-`../psionEmulators/harness/build.sh`.
+[psionEmulators](https://github.com/joehaines/psionEmulators) harness. Run
+them from a program's checkout (psimail, psiterm, psiweb...), which has
+psion-core as its `core/` submodule; they expect the emulator beside that
+checkout, at `../psionEmulators`, or wherever `$PSION_EMU` points. Build its
+native harness once with `../psionEmulators/harness/build.sh`. (`PSION_APP`
+names the program's checkout when core is checked out on its own.)
 
 ```
-# PsiMail with a seeded offline mailbox and calendar
-python3 tools/emu/seed.py on && mail/build.sh && python3 tools/emu/seed.py off
-node --experimental-strip-types tools/emu/mkcard.ts psimail --seed
-tools/emu/run.sh inbox "88 4"                  # Esc the first-run question
-tools/emu/run.sh reader "88 4" "92 17" "94 3" "96 3"
-tools/emu/run.sh menus "88 4" "95 148" "97 15" # Menu, then the Edit menu
+# PsiMail with a seeded offline mailbox and calendar (in the psimail checkout)
+python3 core/tools/emu/seed.py on && bash build.sh && python3 core/tools/emu/seed.py off
+node --experimental-strip-types core/tools/emu/mkcard.ts psimail --seed
+core/tools/emu/run.sh inbox "88 4"                  # Esc the first-run question
+core/tools/emu/run.sh reader "88 4" "92 17" "94 3" "96 3"
+core/tools/emu/run.sh menus "88 4" "95 148" "97 15" # Menu, then the Edit menu
 
-# PsiTerm (after build.sh, which copies the app into pkg/)
-node --experimental-strip-types tools/emu/mkcard.ts psiterm
-tools/emu/run.sh start
+# PsiTerm (in the psiterm checkout, after build.sh, which copies the app into pkg/)
+node --experimental-strip-types core/tools/emu/mkcard.ts psiterm
+core/tools/emu/run.sh start
 ```
+
+A program's own card makers and tests live in its `test/emu/`
+(`<name>.card.ts`, `<name>.net.py`); `mkcard.ts` and `net.py` load them from
+the checkout they run in. Another program's files (PsiTerm's `pkg/` while in
+the psimail checkout, say) are looked for in that program's checkout beside
+this one.
 
 Notes:
 - **TESTSEED must never be committed.** Rebuild with `seed.py off` before any release.
-- Screenshots go to `build/emu/NAME/` (one per simulated second) and `end.png`.
+- Screenshots go to `build/emu/NAME/` in the program's checkout (one per simulated second) and `end.png`.
 - **Timing:** PsiMail's first window appears at about 78 s simulated time; PsiTerm's at about 45 s. Keys sent before that are queued or lost.
 - **Keys:** Enter 3, Esc 4, Menu 148, arrows 14–17 (left, right, up, down), letters as ASCII capitals. Taps use `X ≈ LCD x + 45`.
-- **Serial:** `EMU_SERIAL=SOCKET tools/emu/run.sh ...` bridges the Psion's serial port to a Unix socket that a modem is listening on (see *Network tests* below).
+- **Serial:** `EMU_SERIAL=SOCKET core/tools/emu/run.sh ...` bridges the Psion's serial port to a Unix socket that a modem is listening on (see *Network tests* below).
 - **Card layout can wedge loading:** the same build can stall at "Starting the browser engine..." or end with KERN-EXEC 3 on one card image and run cleanly on another with the files shifted (PAD.BIN size). Seen with PsiWeb on 2 Oct 2026: 3 of 11 runs failed on one layout, 0 of 10 with PAD.BIN at 9000 bytes. Try another layout before suspecting the code.
 - **Card writer quirks:** the FAT16 writer holds about 16 entries per folder. If a folder grows past one cluster, the card can come out damaged.
 - `ESTLIB.DLL` is the EPOC C library, taken from the SDK's redistributable `stdlib.sis`. The `seed/` pictures are synthetic test images.
 
 ## Network tests
 
-`tools/emu/net.py` runs the apps' real network code end to end in the
+`core/tools/emu/net.py` runs the apps' real network code end to end in the
 emulator: PsiTerm, PsiMail and PsiWeb dial a modem on the serial port and reach
 local test servers through it. It needs g++, python3 with Pillow, node and
-`/usr/sbin/sshd`, and the apps built as usual (`pkg/`, `build/mail-pkg/`,
-`build/web-pkg/`; no TESTSEED needed).
+`/usr/sbin/sshd`, the apps built as usual (`pkg/` in psiterm, `build/mail-pkg/`
+in psimail, `build/web-pkg/` in psiweb; no TESTSEED needed) and the Atom
+firmware's checkout (psiconnect, for its `hosttest/hostmodem`), all beside
+each other (`PSITERM` and `PSICONNECT` name them when they are elsewhere).
 
 ```
-python3 tools/emu/net.py            # all four, about 3 minutes
-python3 tools/emu/net.py web mail   # or some of: at web mail ssh
+python3 core/tools/emu/net.py            # all four, about 3 minutes
+python3 core/tools/emu/net.py web mail   # or some of: at web mail ssh
 ```
 
 | Test | What happens | Passes when |
@@ -58,7 +68,7 @@ example a copy, while someone else is rebuilding). A failed test is run once
 more (`EMU_RETRIES`), because of the card wedge described above.
 
 How it works:
-- The modem is `firmware/atom-modem/hosttest/hostmodem` (built with `make`),
+- The modem is psiconnect's `hosttest/hostmodem` (built with `make`),
   listening on a socket in a fresh `/tmp/psiemu-*` folder (a socket path must
   be under 108 bytes). Its `HOSTMODEM_REDIRECT=127.0.0.1:PORT` sends every
   dial to the test's server, so the addresses typed on the Psion are short.

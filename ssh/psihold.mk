@@ -1,10 +1,14 @@
 # psihold.exe: keeps the Psion's Internet connection up after use (see
 # psihold.cpp and psilink.h). Every program's build makes it and installs it
 # in that program's own folder; whichever brings the link up starts one.
-#   make -f ssh/psihold.mk PSION_SDK=...     -> build/psihold/psihold.exe
+#   make -f core/ssh/psihold.mk PSION_SDK=... TOP=<program's checkout>
+#                                            -> $(TOP)/build/psihold/psihold.exe
+# (TOP defaults to the folder above this core checkout, which is the
+# program's own when core is its submodule.)
 # Plain EUSER/EFSRV/NIFMAN: no ESTLIB, so a few KB.
-TOP     := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
-O       := $(TOP)/build/psihold
+CORE    := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+TOP     ?= $(abspath $(CORE)/..)
+O       ?= $(TOP)/build/psihold
 SDK     ?= $(PSION_SDK)
 E       := $(SDK)/epoc_cpp_sdk/epoc32
 REL     := $(E)/release/marm/rel
@@ -14,14 +18,14 @@ export TMP := /tmp/
 CC      := arm-pe-gcc
 ARCH    := -s -fomit-frame-pointer -O2 -fno-strict-aliasing -nostdinc -mcpu=arm710 -mapcs-32 -mshort-load-bytes -msoft-float
 DEFS    := -D__SYMBIAN32__ -D__PSISOFT32__ -D__GCC32__ -D__EPOC32__ -D__MARM__ -D__EXE__ -DNDEBUG
-CXXFLAGS := $(ARCH) $(DEFS) -Wno-ctor-dtor-privacy -fcheck-new -fvtable-thunks -w -I$(TOP)/ssh -I$(E)/include
+CXXFLAGS := $(ARCH) $(DEFS) -Wno-ctor-dtor-privacy -fcheck-new -fvtable-thunks -w -I$(CORE)/ssh -I$(E)/include
 LIBGCC  := $(SDK)/gcc-3.0-psion-98r2-9/lib/gcc-lib/arm-epoc-pe/3.0-psion-98r2/libgcc.a
 SYSLIBS := $(REL)/euser.lib $(REL)/efsrv.lib $(REL)/nifman.lib $(LIBGCC)
 OUT     := $(O)/psihold.exe
 
 all: $(OUT)
 
-$(O)/psihold.o: $(TOP)/ssh/psihold.cpp $(TOP)/ssh/psilink.h
+$(O)/psihold.o: $(CORE)/ssh/psihold.cpp $(CORE)/ssh/psilink.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CXXFLAGS) $< -o $@
 
