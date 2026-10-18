@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #include "pwnet.h"
-#include "../psiweb.h"
+#include "../../ssh/psishared.h"   /* PsiShared: the chunk every engine starts with */
 #ifndef PW_NO_TLS
 #include "../../ssh/tls13.h"
 extern int tls_pending(void);

@@ -1,0 +1,36 @@
+# build output of the host tests and tools
+*.o
+*.pyc
+__pycache__/
+ssh/linktest
+ssh/linkseentest
+ssh/psilinktest
+ssh/psiholdtest
+tools/sbtest/sbtest
+tools/drawtest/fbtest
+tools/shot/host
+tools/shot/host.raw
+tools/shot/host.screen
+
+# release signing key: never commit
+*.key
+signing/
+
+# local additions to the emulator tools (a program's own go in its test/emu/)
+/tools/emu/local/
+/tools/docker/psibuild.local
+
+# local headers, logs and environment
+*_local.h
+*_local.*
+*.log
+*.log.old
+.env
+.env.*
+
+# editors / OS
+.DS_Store
+*~
+*.swp
+.claude/
+CLAUDE.local.md

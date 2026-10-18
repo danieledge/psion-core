@@ -61,7 +61,7 @@ def main():
                         print('%s -> switching in 5 s' % cmd, flush=True)
                         # (5 s on the WiRSa; shorter here because the
                         # emulator runs faster than the clock on the wall,
-                        # and PsiKernTest waits 5.3 s of the Psion's time)
+                        # and the kernel experiment waits 5.3 s of the Psion's time)
                         time.sleep(float(os.environ.get('FAKEWIRSA_SWITCH_S', '0.2')))
                         speed = want
                         out = b'\r\nOK\r\n'

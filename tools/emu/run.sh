@@ -29,10 +29,14 @@
 #                the first N data aborts and where they were)
 #   EMU_SAVE_CARD=FILE  write the card image out at the end (read files the
 #                Psion wrote with tools/emu/cardcat.ts)
-#   PSION_EMU    the psionEmulators checkout (default ../psionEmulators)
+#   PSION_EMU    the psionEmulators checkout (default ../psionEmulators,
+#                beside the program's checkout)
+#   PSION_APP    the program's checkout, where build/emu/ goes (default: the
+#                folder above this core checkout, its core/ submodule)
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-REPO=$(cd "$HERE/../.." && pwd)
+CORE=$(cd "$HERE/../.." && pwd)
+REPO=${PSION_APP:-$(cd "$CORE/.." && pwd)}
 EMU=${PSION_EMU:-$(cd "$REPO/.." && pwd)/psionEmulators}
 ROM=${EMU_ROM:-"$EMU/roms/Series5mx/5mx_v1.05(260)_eng/5mx_v1.05(260)_eng.bin"}
 CARD=${EMU_CARD:-$REPO/build/emu/card.img}
