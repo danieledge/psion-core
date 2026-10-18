@@ -1,5 +1,7 @@
 # psion-core
 
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/danedge)
+
 The shared code and tools behind the Psion Series 5mx suite:
 [PsiTerm](https://github.com/danieledge/psiterm) (SSH),
 [PsiMail](https://github.com/danieledge/psimail) (email and calendar),
