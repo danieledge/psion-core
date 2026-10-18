@@ -90,7 +90,7 @@ def main():
     if a.key:
         hexseed = open(a.key).read()
     elif os.environ.get("PSITERM_RELEASE_KEY"):
-        hexseed = os.environ["PSITERM_RELEASE_KEY"]       # e.g. from ~/.secrets (the password manager)
+        hexseed = os.environ["PSITERM_RELEASE_KEY"]       # e.g. exported by your shell from a password manager
     else:
         hexseed = open(os.path.expanduser("~/.psiterm-signing/release.key")).read()
     seed = bytes.fromhex(hexseed.strip())
