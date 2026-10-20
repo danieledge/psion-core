@@ -11,6 +11,11 @@
 // pt_log_size / pt_log_read. The log is opened EFileShareAny so it can be
 // read while another psissh is writing it. Every file error is ignored: a
 // full disk or a missing card must never stop a session.
+//
+// The log is kept only when the person asks for one (the app's "Keep a
+// log", passed in PsiShared.log_on): pt_log writes nothing, and makes no
+// file, until pt_log_open has been called, and psissh calls it only when
+// log_on is 1. What is in the files already is left as it is.
 
 #include <e32std.h>
 #include <f32file.h>
@@ -22,6 +27,7 @@ static RFs gLogFs;
 static RFile gLog;
 static TInt gLogOpen = 0;       // 0 not tried, 1 open, -1 failed
 static TInt gLogAppend = 0;     // 1: keep what is there (Send log)
+static TInt gLogWanted = 0;     // pt_log_open called: the app keeps a log
 static TUint gLogT0 = 0;
 static TInt gLogBytes = 0;
 
@@ -62,13 +68,17 @@ static void LogOpen()
 	}
 
 // aAppend: 0 = a new log (the old one becomes PsiTerm.old), 1 = add to it
+// (not called: no log is kept, and pt_log does nothing)
 extern "C" void pt_log_open(int aAppend)
 	{
 	gLogAppend = aAppend;
+	gLogWanted = 1;
 	}
 
 extern "C" void pt_log(const char* aText)
 	{
+	if (!gLogWanted)
+		return;
 	if (gLogOpen == 0)
 		LogOpen();
 	if (gLogOpen != 1 || !aText || gLogBytes > PT_LOG_CAP)

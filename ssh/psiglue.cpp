@@ -606,7 +606,7 @@ static void HoldAfterUse()
 	if (fs.Connect() != KErrNone)
 		return;
 	TFileName me = RProcess().FileName();
-	TInt r = PsiHoldStart(fs, me);
+	TInt r = PsiHoldStart(fs, me, gShared && gShared->log_on);   // (its log only with the app's)
 	fs.Close();
 	if (r == KErrNone)
 		{
@@ -763,8 +763,9 @@ static void EnsureNetdialLog()
 	// PsiTerm's SSH mode). The folder holds a log that grows with every dial
 	// and never shrinks, which a 16 MB machine cannot leave unbounded; to get
 	// the OS's own account from PsiMail or PsiWeb, make C:\LOGS\Netdial\ by hand.
+	// And only when the person keeps a log (PsiShared.log_on, "Keep a log").
 	static int done = 0;
-	if (done || !gDialVerbose)
+	if (done || !gDialVerbose || !gShared || !gShared->log_on)
 		return;
 	done = 1;
 	RFs fs;
