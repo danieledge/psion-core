@@ -267,6 +267,7 @@ struct TPsiLink
 // (PSILINK_HOLDFIND: also for the host test, ssh/test/psiholdtest.cpp.)
 #if !defined(PSILINK_STRUCT_ONLY) || defined(PSILINK_HOLDFIND)
 _LIT(KPsiHoldExe, "psihold.exe");
+_LIT(KPsiHoldLogArg, "log");              // its command line: keep PsiHold.log
 
 inline TBool PsiHoldFind(RFs& aFs, TFileName& aExe)
 	{
@@ -380,7 +381,9 @@ inline TInt PsiLinkActive()
 // caller's own folder (the app's or the engine's), whose psihold.exe is
 // tried first; then any program's folder (PsiHoldFind). Returns
 // KErrNone if started, else why not (nothing to do is not a failure).
-inline TInt PsiHoldStart(RFs& aFs, const TDesC& aNear)
+// aLog: the caller keeps a log (its "Keep a log" is ticked): psihold.exe
+// then writes PsiHold.log too; otherwise it writes nothing.
+inline TInt PsiHoldStart(RFs& aFs, const TDesC& aNear, TBool aLog = EFalse)
 	{
 	TPsiLink link;
 	link.SetDefaults();
@@ -405,7 +408,7 @@ inline TInt PsiHoldStart(RFs& aFs, const TDesC& aNear)
 	if (!found)
 		return KErrNotFound;
 	RProcess p;
-	TInt r = p.Create(exe, KNullDesC);
+	TInt r = p.Create(exe, aLog ? KPsiHoldLogArg() : KNullDesC());
 	if (r != KErrNone)
 		return r;
 	p.Resume();

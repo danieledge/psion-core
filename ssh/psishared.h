@@ -167,6 +167,13 @@ typedef struct
 	   Internet (PPP) route, where the engine always does its own TLS. Only
 	   PsiMail reads it (SSH is never wrapped, PsiWeb offloads via the proxy). */
 	int modem_tls;
+	/* (logging switch, October 2026) 1 = the person has ticked the app's
+	   "Keep a log": the engine writes its log file, psiglue makes the OS's
+	   NetDial log folder (PsiTerm) and starts psihold.exe with its log.
+	   0 = no log file is written at all (the standard, also after an
+	   upgrade: there was no switch before). The app sets it before it
+	   starts the engine; the engine reads it when it starts. */
+	int log_on;
 	} PsiShared;
 
 /* log_state (mode 6) */

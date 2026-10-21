@@ -80,7 +80,7 @@ nothing had to be renamed and `git log` follows every file back:
 | `ssh/pglinkseen.h`, `ssh/pgdevbox.h` | the link's last sign of life; the optional dev box (PsiProxy-only routes) |
 | `ssh/psihold.cpp`, `ssh/psihold.mk` | `psihold.exe`, which keeps the Psion Internet link up after use ("Stay connected") |
 | `ssh/psigrey*.h`, `ssh/psigreyui.cpp`, `ssh/psidisp.h` | the 16-grey calibration, its Preferences screen, and the display helpers |
-| `ssh/ptlog.cpp` | the engines' log file |
+| `ssh/ptlog.cpp` | the engines' log file (written only when the app's "Keep a log" is ticked: `PsiShared.log_on`) |
 | `ssh/tls13.c`, `.h` | the TLS 1.3 client (X25519, ChaCha20-Poly1305), used by PsiMail, PsiWeb and the updaters |
 | `ssh/zlib/` | zlib, as it is (inflate for PNG pictures and updates, deflate for PsiCast) |
 | `ssh/db/libtomcrypt/`, `ssh/db/libtommath/` | LibTomCrypt and LibTomMath from Dropbear (`ltc_sources.txt`, `ltm_sources.txt` list what the programs build) |

@@ -17,7 +17,9 @@
 //    to the file wakes it; it also looks each minute);
 //  - anything fails.
 // It waits on requests only (no polling), so the Psion can halt between.
-// A few lines go to C:\System\Data\PsiHold.log (4 KB at most).
+// A few lines go to C:\System\Data\PsiHold.log (4 KB at most), only when
+// the program that started it keeps a log ("log" on the command line,
+// PsiHoldStart's aLog); otherwise nothing is written.
 //
 // Started by PsiHoldStart (psilink.h): the engines when they have the link
 // up (psiglue.cpp), and the apps after Connect or a Test that dialled.
@@ -35,8 +37,12 @@ const TInt KHoldLogMax = 4096;
 _LIT(KHoldLog, "C:\\System\\Data\\PsiHold.log");
 _LIT(KHoldWatch, "C:\\System\\Data\\PsiLink.ini");   // (and Wanted is asked each minute too)
 
+static TBool gHoldLogOn = EFalse;           // "log" on the command line
+
 static void Log(RFs& aFs, const TDesC8& aText)
 	{
+	if (!gHoldLogOn)
+		return;
 	RFile f;
 	TInt size = 0;
 	TInt r = f.Open(aFs, KHoldLog, EFileWrite | EFileShareAny);
@@ -222,6 +228,7 @@ GLDEF_C TInt E32Main()
 	RSemaphore lock;
 	if (lock.CreateGlobal(KPsiHoldLock, 0) != KErrNone)
 		return 0;                            // one runs already (or no memory)
+	gHoldLogOn = RProcess().CommandLine().Find(KPsiHoldLogArg) >= 0;
 	RFs fs;
 	if (fs.Connect() == KErrNone)
 		{
