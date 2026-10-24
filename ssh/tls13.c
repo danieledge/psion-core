@@ -515,7 +515,11 @@ int tls_connect(const char *host, char *why, int whymax)
 	put16(ch + n, 10); put16(ch + n + 2, 4); put16(ch + n + 4, 2); put16(ch + n + 6, 0x001d); n += 8;
 	/* signature_algorithms (we don't check the signature, but must offer some) */
 	{
-#ifdef TLS_VERIFY
+#if defined(TLS_SIG_PINNED)
+		/* an app that trusts one server, by its RSA key built in (its own
+		   tlsv_* hooks): RSA-PSS for CertificateVerify, nothing else to check */
+		static const unsigned short sa[] = { 0x0804 };
+#elif defined(TLS_VERIFY)
 		/* RSA-PSS for CertificateVerify; PKCS#1 v1.5 for certificates */
 		static const unsigned short sa[] = { 0x0804, 0x0401, 0x0501, 0x0601 };
 #else
