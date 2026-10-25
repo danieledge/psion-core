@@ -5,6 +5,7 @@ __pycache__/
 ssh/linktest
 ssh/linkseentest
 ssh/psilinktest
+ssh/pgdevboxtest
 ssh/psiholdtest
 tools/sbtest/sbtest
 tools/drawtest/fbtest

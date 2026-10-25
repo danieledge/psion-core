@@ -1,16 +1,22 @@
 /* pgdevbox.h - where PsiProxy's own services are (Send log, and a dev tool's
-   builds). That is the shared proxy (PsiLink.ini), unless the proxy is none
-   or the Atom modem's own web proxy (192.168.7.1 on its PPP link, or
-   "psiproxy" through the modem): that one is right for PsiWeb's pages and
-   PsiMail's web pictures but has none of PsiProxy's services, so they go to
-   the address in the optional C:\System\Data\PsiDevBox.ini ("<host>\r\n
-   <port>\r\n", written by an optional dev tool's Dev box... dialog), and are not
-   available when there is none. No address is built in. Plain C, for the
-   engines; TPsiLink::DevBox (psilink.h) is the same rule for the apps. */
+   builds). That is the shared proxy (PsiLink.ini). If it is the Atom modem's
+   own web proxy (192.168.7.1 on its PPP link, or "psiproxy" through the
+   modem), they go to the address in the optional C:\System\Data\PsiDevBox.ini
+   ("<host>\r\n<port>\r\n", written by an optional dev tool's Dev box...
+   dialog) if there is one, else to the Atom's proxy itself: a modem set to
+   a PsiProxy on a computer (AT$PU) passes them on to it. With no proxy they
+   are not available. No address is built in. Plain C, for the engines;
+   TPsiLink::DevBox (psilink.h) is the same rule for the apps.
+
+   The answer counts only if it is PsiProxy's: the Atom's proxy says it has
+   no PsiProxy behind it with a 501 and "X-PsiConnect: no-psiproxy", and an
+   older Atom answers with its own status page (200, HTML). Both are "Needs
+   PsiProxy on a computer" (pg_psiproxy_answer). */
 #ifndef PGDEVBOX_H
 #define PGDEVBOX_H
 
 #include <stdio.h>
+#include <string.h>
 
 #define PG_DEVBOX_FILE "C:\\System\\Data\\PsiDevBox.ini"
 #define PG_DEVBOX_PORT 8081            /* PsiProxy's standard port */
@@ -75,15 +81,66 @@ static int pg_read_devbox(char *host, int hostmax, int *port)
 static int pg_devbox(const char *proxy_host, int proxy_port, const char **host, int *port)
 {
 	static char devbox[64];
-	if (!pg_is_atom_proxy(proxy_host)) {
-		*host = proxy_host;
-		*port = proxy_port > 0 && proxy_port < 65536 ? proxy_port : PG_DEVBOX_PORT;
+	if (!proxy_host || !proxy_host[0])
+		return 0;
+	if (pg_is_atom_proxy(proxy_host) && pg_read_devbox(devbox, (int)sizeof(devbox), port)) {
+		*host = devbox;
 		return 1;
 	}
-	if (!pg_read_devbox(devbox, (int)sizeof(devbox), port))
-		return 0;
-	*host = devbox;
+	*host = proxy_host;                      /* (the Atom's: PsiProxy behind it, if it has one) */
+	*port = proxy_port > 0 && proxy_port < 65536 ? proxy_port : PG_DEVBOX_PORT;
 	return 1;
+}
+
+/* The name for the Host: line. To the Atom's own proxy it is "psiproxy",
+   either way it is reached: an older Atom then answers itself (its status
+   page) and does not try to fetch the address from the Internet. */
+static const char *pg_devbox_hostname(const char *host)
+{
+	return host && host[0] && pg_is_atom_proxy(host) ? "psiproxy" : host;
+}
+
+#define PG_NEEDS_PSIPROXY "Needs PsiProxy on a computer"
+
+/* 1 if a header line of the reply is the Atom's "X-PsiConnect: no-psiproxy" */
+static int pg_no_psiproxy_line(const char *line)
+{
+	static const char name[] = "x-psiconnect:", value[] = "no-psiproxy";
+	int i, k;
+	for (i = 0; name[i]; i++) {
+		char c = line[i];
+		if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+		if (c != name[i]) return 0;
+	}
+	while (line[i] == ' ' || line[i] == '\t')
+		i++;
+	for (k = 0; value[k]; k++) {
+		char c = line[i + k];
+		if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+		if (c != value[k]) return 0;
+	}
+	return 1;
+}
+
+/* What an answer from where PsiProxy's services are means: status, whether
+   a header said no-psiproxy, and whether the body was the service's own
+   (PsiProxy's "Log saved: ..." for /_putlog, a "#PSIDIST1" list...) */
+#define PG_ANSWER_OK      0              /* PsiProxy's: done */
+#define PG_ANSWER_NEEDS   1              /* not PsiProxy: PG_NEEDS_PSIPROXY */
+#define PG_ANSWER_FAILED  2              /* a failure: the status says which */
+static int pg_psiproxy_answer(int status, int no_psiproxy, int ours)
+{
+	if (no_psiproxy)
+		return PG_ANSWER_NEEDS;
+	if (status >= 200 && status < 300)      /* (an older Atom's status page is 200) */
+		return ours ? PG_ANSWER_OK : PG_ANSWER_NEEDS;
+	return PG_ANSWER_FAILED;
+}
+
+/* 1 if the first line of a /_putlog answer is PsiProxy's "Log saved: ..." */
+static int pg_putlog_saved(const char *body)
+{
+	return body && !strncmp(body, "Log saved", 9);
 }
 
 #endif

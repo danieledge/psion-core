@@ -1,8 +1,8 @@
 # Host tests for the shared connection layer (run in core/ssh):
-#   make -f test/Makefile.host test      build and run all four
+#   make -f test/Makefile.host test      build and run them all
 # Each one is a PC program; nothing here needs the EPOC SDK.
 
-all: linktest linkseentest psilinktest psiholdtest
+all: linktest linkseentest psilinktest pgdevboxtest psiholdtest
 
 # Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
 linktest: test/linktest.cpp psiglue.cpp pglinktest.h
@@ -17,6 +17,10 @@ linkseentest: test/linkseentest.cpp pglinkseen.h
 psilinktest: test/psilinktest.cpp psilink.h
 	g++ -Wall -O1 -g test/psilinktest.cpp -o $@
 
+# Where PsiProxy's services are, and which answers are its, for the engines (pgdevbox.h)
+pgdevboxtest: test/pgdevboxtest.c pgdevbox.h
+	gcc -Wall -O1 -g -fsanitize=address,undefined test/pgdevboxtest.c -o $@
+
 # psihold.exe found by reading \System\Apps\, not by program names (psilink.h)
 psiholdtest: test/psiholdtest.cpp psilink.h
 	g++ -Wall -O1 -g -fsanitize=address,undefined test/psiholdtest.cpp -o $@
@@ -25,9 +29,10 @@ test: all
 	./linktest
 	./linkseentest
 	./psilinktest
+	./pgdevboxtest
 	./psiholdtest
 
 clean:
-	rm -f linktest linkseentest psilinktest psiholdtest
+	rm -f linktest linkseentest psilinktest pgdevboxtest psiholdtest
 
 .PHONY: all test clean
