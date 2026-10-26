@@ -43,7 +43,7 @@ program.
   `psiproxy`, port `8080`. That is the modem itself.
 - **If you also run PsiProxy**, keep the Psion's setting as it is and tell
   the modem where PsiProxy is: `AT$PU=<computer's address>:8081` and
-  `AT&W`, or PsiConnect > Settings > Web proxy, or the modem's web pages.
+  `AT&W`, or on the modem's web pages (Settings > Web proxy).
   The modem then hands each call to PsiProxy, and falls back to its own
   proxy when PsiProxy does not answer (away from home). Nothing changes on
   the Psion when you add or remove PsiProxy.
@@ -57,7 +57,7 @@ there is none, rather than failing with a connection error.
 
 - **Atom modem:** [PsiConnect's README](https://github.com/danieledge/psiconnect#readme)
   (the firmware, its web proxy, pictures, PPP and the mail relay) and the
-  PsiConnect program on the Psion for its WiFi and settings.
+  modem's web pages for its WiFi and settings.
 - **PsiConnect Host:** the same firmware for Linux and macOS, with a USB to
   RS-232 adapter. It is being tested and is not released yet.
 - **PsiProxy:** [its README](https://github.com/danieledge/psiproxy#readme)
