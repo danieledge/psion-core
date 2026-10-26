@@ -64,7 +64,9 @@ Screenshots are in `build/emu/net/<test>/` (`end.png` is the last frame), with
 the modem's log (`<test>-modem.log`) and the servers' logs (`http.log`,
 `imap.log`, `sshd.log`) next to them. `EMU_NET_DIR` moves all of this;
 `EMU_PKG_TERM`, `EMU_PKG_MAIL` and `EMU_PKG_WEB` point at other app files (for
-example a copy, while someone else is rebuilding). A failed test is run once
+example a copy, while someone else is rebuilding). `EMU_SSH_HOSTKEY=rsa` gives the `ssh`
+test's sshd a 2048-bit RSA host key (PsiTerm then checks an rsa-sha2-256
+signature) instead of Ed25519. A failed test is run once
 more (`EMU_RETRIES`), because of the card wedge described above.
 
 How it works:
