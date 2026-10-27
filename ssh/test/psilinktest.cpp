@@ -3,8 +3,9 @@
 // Psion but off for an older file (an upgrade keeps the idle hang-up), it
 // survives a save, a v4 file still reads right in the parts an older
 // program (v3) knows, no proxy address is built in, and DevBox finds
-// PsiProxy's services (the proxy, or PsiDevBox.ini behind the Atom's). A few lines of EPOC stand-ins
-// (descriptors, RFs, RFile over a map) let TPsiLink build on a PC.
+// PsiProxy's services (the proxy; behind the Atom's, PsiDevBox.ini, else the
+// Atom's own). A few lines of EPOC stand-ins (descriptors, RFs, RFile over a
+// map) let TPsiLink build on a PC.
 //   in ssh/: make -f test/Makefile.host psilinktest && ./psilinktest
 #include <stdio.h>
 #include <string.h>
@@ -186,11 +187,22 @@ int main()
 	CHECK(!l.DevBox(fs, h, dport));                   // no proxy, no PsiDevBox.ini: nowhere
 	l.iUseProxy = 1; l.iProxyHost.Copy(_L("proxy.example")); l.iProxyPort = 8016;
 	CHECK(l.DevBox(fs, h, dport) && h == TBuf<60>(_L("proxy.example")) && dport == 8016);
-	// the Atom's own proxy (either name, any case), no PsiDevBox.ini: nowhere
-	l.iProxyHost.Copy(_L("192.168.7.1"));
-	CHECK(!l.DevBox(fs, h, dport));
+	// the Atom's own proxy (either name, any case), no PsiDevBox.ini: the
+	// Atom's proxy itself (it passes them to a PsiProxy, or says it has none)
+	l.iProxyHost.Copy(_L("192.168.7.1")); l.iProxyPort = 8080;
+	CHECK(l.DevBox(fs, h, dport) && h == TBuf<60>(_L("192.168.7.1")) && dport == 8080);
 	l.iProxyHost.Copy(_L("PsiProxy"));
+	CHECK(l.DevBox(fs, h, dport) && h == TBuf<60>(_L("PsiProxy")) && dport == 8080);
+	l.iProxyPort = 0;                                 // (a port out of range: PsiProxy's standard one)
+	CHECK(l.DevBox(fs, h, dport) && dport == 8081);
+	l.iProxyPort = 8016;
+	// no proxy host at all: nowhere, PsiDevBox.ini or not
+	l.iProxyHost.Zero();
 	CHECK(!l.DevBox(fs, h, dport));
+	gDisk["C:\\System\\Data\\PsiDevBox.ini"] = "devbox.example\r\n8090\r\n";
+	CHECK(!l.DevBox(fs, h, dport));
+	gDisk.clear();
+	l.iProxyHost.Copy(_L("PsiProxy"));
 	CHECK(!TPsiLink::IsAtomProxy(TBuf<60>(_L("192.168.7.10"))) && !TPsiLink::IsAtomProxy(TBuf<60>(_L("psiproxy2"))));
 	// ...with PsiDevBox.ini: that
 	gDisk["C:\\System\\Data\\PsiDevBox.ini"] = "devbox.example\r\n8090\r\n";
@@ -198,17 +210,17 @@ int main()
 	// a real proxy still wins over the file
 	l.iProxyHost.Copy(_L("10.0.0.5"));
 	CHECK(l.DevBox(fs, h, dport) && h == TBuf<60>(_L("10.0.0.5")) && dport == 8016);
-	// a damaged PsiDevBox.ini is ignored
+	// a damaged PsiDevBox.ini is ignored: the Atom's proxy
 	l.iProxyHost.Copy(_L("192.168.7.1"));
 	const char* bad[] = { "", "\r\n8081\r\n", "host\r\n", "host\r\n0\r\n", "host\r\n70000\r\n",
 		"ho st\r\n8081\r\n", "host\r\nabc\r\n" };
 	for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
 		{
 		gDisk["C:\\System\\Data\\PsiDevBox.ini"] = bad[i];
-		CHECK(!l.DevBox(fs, h, dport));
+		CHECK(l.DevBox(fs, h, dport) && h == TBuf<60>(_L("192.168.7.1")) && dport == 8016);
 		}
 	gDisk["C:\\System\\Data\\PsiDevBox.ini"] = std::string(80, 'a') + "\r\n8081\r\n";   // too long
-	CHECK(!l.DevBox(fs, h, dport));
+	CHECK(l.DevBox(fs, h, dport) && h == TBuf<60>(_L("192.168.7.1")) && dport == 8016);
 	gDisk["C:\\System\\Data\\PsiDevBox.ini"] = "devbox\n8081";                       // bare \n, no last line end
 	CHECK(l.DevBox(fs, h, dport) && h == TBuf<60>(_L("devbox")) && dport == 8081);
 

@@ -40,6 +40,7 @@ so the addresses typed on the Psion can be short.
                 build/mail-pkg/, build/web-pkg/ in this checkout or the
                 program's beside it, as mkcard.ts)
   EMU_RETRIES   runs a failed test again this many times (default 1)
+  EMU_SSH_HOSTKEY  rsa: the ssh test's sshd has an RSA host key (default ed25519)
   EMU_PROXY_URL the address the proxy test types (default news.ycombinator.com)
   --keep        leave the test keys in the work folder (logs and
                 screenshots always stay)
@@ -304,11 +305,15 @@ def mail_script():
 def ssh_setup(ctx, sftp_root=None):
     d = os.path.join(WORK, 'sshd')
     os.makedirs(d, exist_ok=True)
+    # EMU_SSH_HOSTKEY=rsa gives the sshd a 2048-bit RSA host key instead
+    # (rsa-sha2-256, which PsiTerm prefers when the server has both)
+    hk = os.environ.get('EMU_SSH_HOSTKEY', 'ed25519')
     for f in ('host_ed25519', 'host_ed25519.pub', 'id_ed25519', 'id_ed25519.pub'):
         p = os.path.join(d, f)
         if os.path.exists(p):
             os.remove(p)
-    run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'psiemu-host', '-f', os.path.join(d, 'host_ed25519')])
+    run(['ssh-keygen', '-q', '-t', hk] + (['-b', '2048'] if hk == 'rsa' else []) +
+        ['-N', '', '-C', 'psiemu-host', '-f', os.path.join(d, 'host_ed25519')])
     run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'psiemu-test', '-f', os.path.join(d, 'id_ed25519')])
     shutil.copy(os.path.join(d, 'id_ed25519.pub'), os.path.join(d, 'authorized_keys'))
     os.chmod(os.path.join(d, 'authorized_keys'), 0o600)

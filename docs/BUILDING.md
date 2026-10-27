@@ -92,6 +92,7 @@ nothing had to be renamed and `git log` follows every file back:
 | `web/engine/pwnet.c`, `.h` | one network connection at a time over psiglue: the HTTP client PsiWeb, PsiCast and the other single-connection programs use |
 | `web/tls/` | the X25519 field arithmetic, ChaCha20-Poly1305 and SHA-256 behind `tls13.c` (each program's own `tls/` folder adds its LibTomCrypt configuration) |
 | `tools/docker/` | the `psion-build` image and `psibuild` |
+| `tools/v4bx.py`, `tools/v4bx.mk` | the SDK's `libgcc.a` with every BX made MOV PC, which every engine links (`$(LIBGCC)`): its helpers return with BX, an undefined instruction on the netBook's SA-1100 (KERN-EXEC 3). `v4bx.py --check` counts the BX left in a linked `.tmp.exe` |
 | `tools/emu/` | the emulator tools: card images, screenshots, network tests ([README](../tools/emu/README.md)) |
 | `tools/release/` | `sign.py` (release signing) and `publish-local.sh` |
 | `tools/icon/`, `tools/fonts/`, `tools/mkicons.py`, `tools/mkgrey.py`, `tools/mkcalpic.py` | the AIF writer, the Terminus font conversion, the toolbar pictures and the grey tables |

@@ -38,8 +38,8 @@
 // writes it back without the newer fields, which then load as standard).
 //
 // PsiDevBox.ini (optional, C:\System\Data): where PsiProxy's own services
-// (Send log, a dev tool's builds) are, when the proxy in use is one that has
-// none of them. "<host>\r\n<port>\r\n". Nothing writes it but an optional dev
+// (Send log, a dev tool's builds) are, when the proxy in use is the Atom
+// modem's own. "<host>\r\n<port>\r\n". Nothing writes it but an optional dev
 // tool's Dev box... dialog, and nothing is sent anywhere unless the person asks
 // (Send log): see DevBox below and pgdevbox.h, the same rule in C.
 #ifndef PSILINK_H
@@ -81,7 +81,8 @@ struct TPsiLink
 
 	// ETrue if aHost is empty, or the Atom modem's own web proxy (192.168.7.1
 	// on its PPP link, or "psiproxy" through the modem), which fetches pages
-	// but has none of PsiProxy's own services
+	// and has PsiProxy's own services only if the modem is set to pass them
+	// on to a PsiProxy on a computer (AT$PU)
 	template <class D> static TBool IsAtomProxy(const D& aHost)
 		{
 		return aHost.Length() == 0 || SameF(aHost, "192.168.7.1") || SameF(aHost, "psiproxy");
@@ -101,21 +102,22 @@ struct TPsiLink
 		}
 
 	// Where PsiProxy's own services are (Send log, a dev tool's builds):
-	// the proxy, unless that is the Atom's own (or none), when it is the
-	// address in PsiDevBox.ini if there is one. EFalse if there is nowhere:
-	// then the caller says "Not available - set a proxy in Connection
-	// settings". Nothing is built in.
+	// the proxy, but if that is the Atom's own, the address in PsiDevBox.ini
+	// if there is one (else the Atom's proxy: PsiProxy behind it, if the
+	// modem has one, or it answers "no-psiproxy": pgdevbox.h). EFalse if
+	// there is no proxy: then the caller says "Not available - set a proxy
+	// in Connection settings". Nothing is built in.
 	template <class D> TBool DevBox(RFs& aFs, D& aHost, TInt& aPort) const
 		{
-		if (!IsAtomProxy(iProxyHost))
-			{
-			aHost.Zero();
-			for (TInt i = 0; i < iProxyHost.Length() && i < aHost.MaxLength(); i++)
-				aHost.Append(iProxyHost[i]);
-			aPort = iProxyPort > 0 && iProxyPort < 65536 ? iProxyPort : 8081;
+		if (iProxyHost.Length() == 0)
+			return EFalse;
+		if (IsAtomProxy(iProxyHost) && ReadDevBox(aFs, aHost, aPort))
 			return ETrue;
-			}
-		return ReadDevBox(aFs, aHost, aPort);
+		aHost.Zero();
+		for (TInt i = 0; i < iProxyHost.Length() && i < aHost.MaxLength(); i++)
+			aHost.Append(iProxyHost[i]);
+		aPort = iProxyPort > 0 && iProxyPort < 65536 ? iProxyPort : 8081;
+		return ETrue;
 		}
 
 	// PsiDevBox.ini: ETrue and the address if it is there and sound
