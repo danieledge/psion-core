@@ -7,6 +7,9 @@
 | [zlib](https://zlib.net/) (upstream commit `767c4c94`) | `ssh/zlib/` | zlib licence - see `ssh/zlib/LICENSE` |
 | [picojpeg](https://github.com/richgel999/picojpeg) (baseline JPEG decoder, Rich Geldreich; with a luma-only mode, 1/2 and 1/4 shrink-on-decode and an 8-bit Huffman look-up added for the Psion, marked `PsiMail:` in the source) | `mail/engine/img/picojpeg.c`, `picojpeg.h` | public domain |
 | [Terminus Font](https://terminus-font.sourceforge.net/) (converted to EPOC format) | `tools/fonts/`, `pkg/psiterm.gdr` | SIL Open Font License 1.1 - see `pkg/terminus-licence.txt` |
+| [Spleen](https://github.com/fcambus/spleen) 2.1.0 by Frederic Cambus (6x12, 8x16, 12x24; converted to EPOC format) | `tools/fonts/src/`, `pkg/psiterm.gdr` | BSD 2-clause - see `pkg/font-licences.txt` |
+| [Gohufont](https://font.gohu.org/) 2.1 by Hugo Chargois (11 and 14; converted to EPOC format) | `tools/fonts/src/`, `pkg/psiterm.gdr` | WTFPL - see `pkg/font-licences.txt` |
+| [Cozette](https://github.com/slavfox/Cozette) 1.25.2 by Slavfox (6x13; converted to EPOC format) | `tools/fonts/src/`, `pkg/psiterm.gdr` | MIT - see `pkg/font-licences.txt` |
 | EPOC C Standard Library (`ESTLIB.DLL`) from the Psion EPOC R5 C++ SDK | `tools/emu/ESTLIB.DLL`, for the emulator's card only | Psion's redistributable runtime, shipped with programs that use it as the SDK directs |
 
 The PNG and GIF decoders, the progressive JPEG decoder and the 16-grey

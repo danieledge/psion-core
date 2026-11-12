@@ -95,9 +95,9 @@ nothing had to be renamed and `git log` follows every file back:
 | `tools/v4bx.py`, `tools/v4bx.mk` | the SDK's `libgcc.a` with every BX made MOV PC, which every engine links (`$(LIBGCC)`): its helpers return with BX, an undefined instruction on the netBook's SA-1100 (KERN-EXEC 3). `v4bx.py --check` counts the BX left in a linked `.tmp.exe` |
 | `tools/emu/` | the emulator tools: card images, screenshots, network tests ([README](../tools/emu/README.md)) |
 | `tools/release/` | `sign.py` (release signing) and `publish-local.sh` |
-| `tools/icon/`, `tools/fonts/`, `tools/mkicons.py`, `tools/mkgrey.py`, `tools/mkcalpic.py` | the AIF writer, the Terminus font conversion, the toolbar pictures and the grey tables |
+| `tools/icon/`, `tools/fonts/`, `tools/mkicons.py`, `tools/mkgrey.py`, `tools/mkcalpic.py` | the AIF writer, the font conversion (`tools/fonts/mkgd.py`: Terminus, Spleen, Gohufont, Cozette into one `.gdr`), the toolbar pictures and the grey tables |
 | `tools/drawtest/`, `tools/shot/`, `tools/sbtest/` | PsiTerm's terminal rendering tests and screenshot renderer |
-| `pkg/psiterm.gdr`, `pkg/terminus-licence.txt` | the Terminus font in EPOC format, installed by PsiTerm and PsiLinux |
+| `pkg/psiterm.gdr`, `pkg/terminus-licence.txt`, `pkg/font-licences.txt` | the terminal fonts in EPOC format (typefaces Terminus, Spleen, Gohufont and Cozette), installed by PsiTerm and PsiLinux. Rebuild: `python3 mkgd.py > psiterm.gd` in `tools/fonts`, then the SDK's `fnttran psiterm.gd psiterm.gdr` |
 | `server/` | the optional local update and upload server (plain HTTP) |
 | `docs/` | these notes, [TESTING.md](TESTING.md), the EPOC robustness and comms best practice, the display and power notes, the October 2026 review |
 
