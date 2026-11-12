@@ -302,7 +302,7 @@ def mail_script():
     return s
 
 
-def ssh_setup(ctx, sftp_root=None):
+def ssh_setup(ctx, sftp_root=None, tmux_dir=None):
     d = os.path.join(WORK, 'sshd')
     os.makedirs(d, exist_ok=True)
     # EMU_SSH_HOSTKEY=rsa gives the sshd a 2048-bit RSA host key instead
@@ -325,9 +325,16 @@ def ssh_setup(ctx, sftp_root=None):
         f.write('#!/bin/sh\n# the only thing the test sshd runs\ncd "%s"\n'
                 'case "$SSH_ORIGINAL_COMMAND" in internal-sftp*|sftp|*sftp-server*)\n'
                 '  exec /usr/lib/openssh/sftp-server -d "%s" -e -l INFO 2>>"%s/sftp.log";; esac\n'
+                '%s'
                 'echo "psiemu sshd: logged in as $(id -un)"\n'
-                'exec env -i HOME="%s" PATH=/usr/bin:/bin TERM="${TERM:-vt100}" PS1="psiemu$ " /bin/sh -i\n'
-                % (d, sftp_root or d, WORK, d))
+                'exec env -i HOME="%s" PATH=/usr/bin:/bin TERM="${TERM:-vt100}" PS1="psiemu$ " %s/bin/sh -i\n'
+                % (d, sftp_root or d, WORK,
+                   # (the tmux test: a command - PsiTerm's tmux start, its query
+                   # channel - runs as asked, with tmux on a socket of its own)
+                   ('[ -n "$SSH_ORIGINAL_COMMAND" ] && exec env -i HOME="%s" PATH=/usr/bin:/bin '
+                    'TERM="${TERM:-vt100}" TMUX_TMPDIR="%s" /bin/sh -c "$SSH_ORIGINAL_COMMAND"\n'
+                    % (d, tmux_dir)) if tmux_dir else '',
+                   d, ('TMUX_TMPDIR="%s" ' % tmux_dir) if tmux_dir else ''))
     os.chmod(shell, 0o700)
     port = free_port()
     cfg = os.path.join(d, 'sshd_config')
@@ -382,6 +389,76 @@ def ssh_script(user):
     s.type('y').wait(12)                      # (the shell is up ~5 s later)
     s.type('echo PSIEMU-$((6*7)) $(uname -s)\r')
     return s
+
+
+# PsiTerm 1.01's tmux, as Muxedo's: tmux settings > Start in tmux, then SSH;
+# the server starts tmux in a session of the Psion's own (main-psion, grouped
+# with main) and PsiTerm sets the options on attach; tmux > Windows > New
+# window and View > Scroll > tmux history go to tmux on the query channel.
+# tmux runs on a socket of its own (TMUX_TMPDIR), never the user's.
+def test_tmux(ctx):
+    tdir = os.path.join(ctx.sockdir, 't')
+    os.makedirs(tdir)
+    r = ssh_setup(ctx, tmux_dir=tdir)
+    if not r:
+        return False, 'sshd did not start (see %s/sshd.log)' % WORK
+    d, port, log = r
+    hist = os.path.join(d, '.psiterm-history.txt')
+    if os.path.exists(hist):
+        os.remove(hist)
+    card = os.path.join(WORK, 'tmux.img')
+    make_card('psiterm', card, 'EMU_PKG_TERM', [('PSIKEY', os.path.join(d, 'id_ed25519'))])
+    ctx.modem('tmux', redirect='127.0.0.1:%d' % port)
+    s = Script(52).key(MENU, gap=1).key(LEFT, gap=1.5).key(DOWN, gap=0.8).key(ENTER, gap=2)
+    s.ctrl('i', gap=2).key(DOWN, gap=0.8)
+    for _ in range(16):
+        s.key(DEL, gap=0.15)
+    s.type('d:\\psikey').key(ENTER, gap=15)
+    s.key(ENTER, gap=2).key(ESC, gap=2)
+    # tmux > tmux settings... (the menu's last item): Start in tmux, Yes.
+    # (The menu bar opens on the title used last: Tools, after SSH keys)
+    s.key(MENU, gap=2.5).key(LEFT, gap=1.5)
+    for _ in range(7):
+        s.key(DOWN, gap=1)
+    s.key(ENTER, gap=3).key(RIGHT, gap=1).key(ENTER, gap=2)
+    s.ctrl('s', shift=True, gap=2).ctrl('n', gap=2)
+    s.type('t').key(DOWN, gap=0.8).type('t').key(DOWN, gap=0.8).type(getpass.getuser())
+    s.key(ENTER, gap=2)
+    s.key(ENTER, gap=30)                      # Connect; the host key prompt
+    s.type('y').wait(25)                      # tmux starts; the tabs come up
+    s.type('seq 1 80\r').wait(6)
+    # tmux > Windows > New window. (The pane opens on the item chosen last,
+    # tmux settings...: Windows is two up)
+    s.key(MENU, gap=2.5)
+    for _ in range(2):
+        s.key(UP, gap=1)
+    s.key(RIGHT, gap=1).key(ENTER, gap=12)
+    # back to the first window, then View > Scroll > tmux history
+    s.ctrl('b').type('1').wait(8)
+    s.key(MENU, gap=2.5).key(LEFT, gap=1.5).key(LEFT, gap=1.5).key(LEFT, gap=1.5)   # tmux -> View
+    for _ in range(7):
+        s.key(DOWN, gap=1)                  # (Scroll: the View menu's 8th item)
+    s.key(RIGHT, gap=1)
+    for _ in range(3):
+        s.key(DOWN, gap=1)
+    s.key(ENTER, gap=25)
+    out = emulate('tmux', card, ctx.sock, s, secs=int(os.environ.get('EMU_TMUX_SECS', 20)))
+    env = dict(os.environ, TMUX_TMPDIR=tdir)
+    env.pop('TMUX', None)
+    def tmux(*a):
+        try:
+            return subprocess.run(['tmux'] + list(a), env=env, capture_output=True, text=True, timeout=10).stdout
+        except Exception:
+            return ''
+    sessions = tmux('ls', '-F', '#{session_name} #{session_windows}')
+    opt = tmux('show', '-gv', 'aggressive-resize')
+    tmux('kill-server')
+    shutil.rmtree(tdir, ignore_errors=True)
+    with open(os.path.join(out, 'tmux-result.txt'), 'w') as f:
+        f.write('sessions:\n%s\naggressive-resize: %s\nhistory file: %s\n'
+                % (sessions, opt, os.path.exists(hist)))
+    ok = ('main-psion 2' in sessions and opt.strip() == 'on' and os.path.exists(hist))
+    return ok, out
 
 
 class Ctx:
@@ -545,7 +622,7 @@ def test_browse(ctx):
     return ok, out
 
 
-TESTS = {'browse': test_browse, 'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
+TESTS = {'tmux': test_tmux, 'browse': test_browse, 'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
          'update': test_update}
 ALL = ['at', 'web', 'mail', 'ssh']             # (proxy needs the Internet: asked for by name)
 

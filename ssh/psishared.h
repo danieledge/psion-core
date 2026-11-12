@@ -174,6 +174,11 @@ typedef struct
 	   upgrade: there was no switch before). The app sets it before it
 	   starts the engine; the engine reads it when it starts. */
 	int log_on;
+	/* (PsiTerm 1.01) PSI_TQ_RUN: tmux commands separated by ';', each run
+	   as "tmux -u <command>" (no " \ or ` in them, and a $ only as a
+	   session id in single quotes, '$3': psissh refuses anything else).
+	   PSI_TQ_HISTORY: tq_idx is how many lines of history. */
+	char tq_cmd[256];
 	} PsiShared;
 
 /* log_state (mode 6) */
@@ -189,7 +194,10 @@ enum
 enum
 	{
 	PSI_TQ_LIST = 1,        /* the clients, windows and status settings */
-	PSI_TQ_SELECT           /* go to window tq_idx of session tq_sid, then LIST */
+	PSI_TQ_SELECT,          /* go to window tq_idx of session tq_sid, then LIST */
+	PSI_TQ_RUN,             /* (PsiTerm 1.01) the tmux commands in tq_cmd, then LIST */
+	PSI_TQ_HISTORY          /* (PsiTerm 1.01) the current pane's history, as text, into
+	                           the file .psiterm-history.txt in the home folder */
 	};
 
 /* ...and how it went (tq_result) */

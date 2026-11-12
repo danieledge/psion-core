@@ -60,6 +60,13 @@ python3 core/tools/emu/net.py web mail   # or some of: at web mail ssh
 | `ssh` | PsiTerm: Tools > SSH keys > Import `D:\PSIKEY`, SSH to a new server, accept the host key, run `echo` | the sshd accepted the key |
 | `browse` | PsiTerm 0.91's file view (Get file / Send file) over SFTP: folders opened in place, favourites, Up, Esc while listing, the Location pane's keys, Go to, the toolbar shown and hidden, a file got and one sent. `sftp-server` serves a test tree in `build/emu/net/bt` | `sftp.log` shows the folders listed, `hello.txt` read and a file written |
 
+`tmux` (asked for by name) is PsiTerm 1.01's tmux: tmux settings > Start in
+tmux, SSH, then tmux > Windows > New window and View > Scroll > tmux history.
+The test sshd runs commands as asked, with tmux on a socket of its own
+(`TMUX_TMPDIR`), never yours. It passes when tmux has the Psion's own session
+(`main-psion`, grouped with `main`) with two windows, the options set on
+attach (`aggressive-resize on`) and the history file written.
+
 Screenshots are in `build/emu/net/<test>/` (`end.png` is the last frame), with
 the modem's log (`<test>-modem.log`) and the servers' logs (`http.log`,
 `imap.log`, `sshd.log`) next to them. `EMU_NET_DIR` moves all of this;
