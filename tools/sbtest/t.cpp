@@ -10,7 +10,7 @@ static VTerm* vt; static VTermScreen* scr; static TTermSb sb; static long pushed
 static int R = 30, C = 106;
 static int cb_push(int cols, const VTermScreenCell* cells, void*) {
 	TSbCell line[160]; if (cols > 160) cols = 160;
-	for (int i = 0; i < cols; i++) { line[i].iCh = cells[i].chars[0] == (uint32_t)-1 ? 0xFFFF : cells[i].chars[0]; line[i].iGrey = 0x0F; line[i].iFlags = 0; }
+	for (int i = 0; i < cols; i++) { line[i].iCh = cells[i].chars[0] == (uint32_t)-1 ? 0xFFFF : cells[i].chars[0]; line[i].iFg = 0; line[i].iBg = 15; line[i].iFlags = 0; }
 	SbPush(&sb, line, cols); pushed++; return 1; }
 // absolute line numbering exactly as PsiTerm: screen row r = pushed + r
 static int linefn(void*, int line, unsigned int* out, int max) {
