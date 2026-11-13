@@ -1901,7 +1901,20 @@ extern "C" int pg_attach()
 		gChunk = new RChunk;
 	if (!gChunk)
 		return -1;
-	TInt r = gChunk->OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
+	// (PsiTerm 1.04) several connections at once: each engine is started
+	// with the name of its own chunk ("PsiTermSSH2"...) as its command line.
+	// Only a name that begins with the usual one is taken; without one (and
+	// in every other program) the usual name, as before.
+	TBuf<24> name;
+	name.Copy(_L(PSI_SHARED_NAME));
+	{
+	TCommand cmd = RProcess().CommandLine();
+	cmd.Trim();
+	if (cmd.Length() > name.Length() && cmd.Length() <= name.MaxLength()
+		&& cmd.Left(name.Length()).Compare(name) == 0)
+		name.Copy(cmd);
+	}
+	TInt r = gChunk->OpenGlobal(name, EFalse);
 	if (r != KErrNone)
 		return -2;
 	gShared = (PsiShared*)gChunk->Base();
