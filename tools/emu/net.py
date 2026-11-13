@@ -415,10 +415,10 @@ def test_tmux(ctx):
         s.key(DEL, gap=0.15)
     s.type('d:\\psikey').key(ENTER, gap=15)
     s.key(ENTER, gap=2).key(ESC, gap=2)
-    # tmux > tmux settings... (the menu's last item): Start in tmux, Yes.
-    # (The menu bar opens on the title used last: Tools, after SSH keys)
-    s.key(MENU, gap=2.5).key(LEFT, gap=1.5)
-    for _ in range(7):
+    # (1.02) the Start view's Edit > tmux settings... (its 5th item): Start
+    # in tmux, Yes. (Its menu bar opens on the title used last: Tools)
+    s.key(MENU, gap=2.5).key(LEFT, gap=1.5).key(LEFT, gap=1.5)
+    for _ in range(4):
         s.key(DOWN, gap=1)
     s.key(ENTER, gap=3).key(RIGHT, gap=1).key(ENTER, gap=2)
     s.ctrl('s', shift=True, gap=2).ctrl('n', gap=2)
@@ -427,11 +427,11 @@ def test_tmux(ctx):
     s.key(ENTER, gap=30)                      # Connect; the host key prompt
     s.type('y').wait(25)                      # tmux starts; the tabs come up
     s.type('seq 1 80\r').wait(6)
-    # tmux > Windows > New window. (The pane opens on the item chosen last,
-    # tmux settings...: Windows is two up)
-    s.key(MENU, gap=2.5)
-    for _ in range(2):
-        s.key(UP, gap=1)
+    # tmux > Windows > New window. (The terminal's menu bar, new after the
+    # Start view, opens on File: tmux is two to the left; Windows its 6th)
+    s.key(MENU, gap=3).key(LEFT, gap=1.5).key(LEFT, gap=1.5)
+    for _ in range(5):
+        s.key(DOWN, gap=1)
     s.key(RIGHT, gap=1).key(ENTER, gap=12)
     # back to the first window, then View > Scroll > tmux history
     s.ctrl('b').type('1').wait(8)
@@ -570,10 +570,9 @@ def test_browse(ctx):
     s = ssh_script(getpass.getuser())
     s.wait(4)
     t0 = s.t
-    # File > Files > Get file (the menu opens on Tools, used last)
-    s.key(MENU, gap=1.2)
-    for _ in range(6):
-        s.key(LEFT, gap=0.6)
+    # File > Files > Get file (1.02: the terminal's menu bar is new after
+    # the Start view, so it opens on File; its pane takes a moment)
+    s.key(MENU, gap=3)
     for _ in range(5):
         s.key(DOWN, gap=0.5)
     s.key(RIGHT, gap=1).key(DOWN, gap=0.6).key(ENTER, gap=12)
@@ -607,7 +606,7 @@ def test_browse(ctx):
     s.key(ENTER, gap=8)                      # Save: the progress window, then the terminal
     # Send file: a Psion file to send first (the Open file dialog offers
     # one in C:\Documents; Files > Log to file makes sure there is one)
-    s.tap(650, 165, gap=1.5).key(DOWN, gap=0.5).key(DOWN, gap=0.5).key(ENTER, gap=2).key(ENTER, gap=3)
+    s.tap(650, 165, gap=1.5).key(DOWN, gap=0.5).key(DOWN, gap=0.5).key(DOWN, gap=0.5).key(ENTER, gap=2).key(ENTER, gap=3)
     s.tap(650, 165, gap=1.5).key(ENTER, gap=3)   # Files > Send file...: the Open file dialog
     s.key(ENTER, gap=8)                      # (the file it offers): the file view, for where it goes
     s.key(DOWN, gap=0.6).key(ENTER, gap=5)   # into beta
@@ -622,7 +621,44 @@ def test_browse(ctx):
     return ok, out
 
 
-TESTS = {'tmux': test_tmux, 'browse': test_browse, 'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
+# PsiTerm 1.02's editor: File > Files > Edit file on server... (Shift+Ctrl+O)
+# picks hello.txt in the file view; text typed at its start, Save (Ctrl+S)
+# puts it back (psissh's SAVE: written beside it, renamed over it), Go to
+# line, then Close. Passes when the server's file has the new text, its CR LF
+# lines kept, and nothing is left beside it.
+def test_edit(ctx):
+    root = os.path.join(WORK, 'et')
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(root)
+    with open(os.path.join(root, 'hello.txt'), 'wb') as f:
+        f.write(b'Hello from the test server\r\nsecond line\r\n')
+    r = ssh_setup(ctx, sftp_root=root)
+    if not r:
+        return False, 'sshd did not start (see %s/sshd.log)' % WORK
+    d, port, log = r
+    card = os.path.join(WORK, 'edit.img')
+    make_card('psiterm', card, 'EMU_PKG_TERM', [('PSIKEY', os.path.join(d, 'id_ed25519'))])
+    ctx.modem('edit', redirect='127.0.0.1:%d' % port)
+    s = ssh_script(getpass.getuser())
+    s.wait(4)
+    s.ctrl('o', shift=True, gap=12)          # Edit file on server...: the file view
+    s.type('h', gap=1.5).key(ENTER, gap=15)  # hello.txt: the editor
+    s.type('Edited ', gap=0.4).wait(2)
+    s.ctrl('s', gap=15)                      # Save
+    s.ctrl('l', gap=3).key(ENTER, gap=3)     # Go to line (the one it is on)
+    s.ctrl('e', gap=5)                       # Close: the terminal again
+    out = emulate('edit', card, ctx.sock, s, secs=6)
+    try:
+        text = open(os.path.join(root, 'hello.txt'), 'rb').read()
+    except OSError:
+        text = b''
+    with open(os.path.join(out, 'edit-result.txt'), 'wb') as f:
+        f.write(text)
+    left = [n for n in os.listdir(root) if n.endswith('.psiterm~')]
+    return text == b'Edited Hello from the test server\r\nsecond line\r\n' and not left, out
+
+
+TESTS = {'edit': test_edit, 'tmux': test_tmux, 'browse': test_browse, 'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
          'update': test_update}
 ALL = ['at', 'web', 'mail', 'ssh']             # (proxy needs the Internet: asked for by name)
 

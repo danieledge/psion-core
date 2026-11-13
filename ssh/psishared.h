@@ -179,6 +179,11 @@ typedef struct
 	   session id in single quotes, '$3': psissh refuses anything else).
 	   PSI_TQ_HISTORY: tq_idx is how many lines of history. */
 	char tq_cmd[256];
+	/* (PsiTerm 1.02) the editor: the server file's modified time (seconds
+	   since 1970) from STAT, GET and SAVE, and SAVE's arguments (above) */
+	volatile unsigned int xfer_mtime;
+	unsigned int xfer_expect;
+	int xfer_force;
 	} PsiShared;
 
 /* log_state (mode 6) */
@@ -216,7 +221,14 @@ enum
 	PSI_XOP_PUT = 1,        /* send xfer_local to xfer_remote (replaces it) */
 	PSI_XOP_GET,            /* fetch xfer_remote into xfer_local */
 	PSI_XOP_LIST,           /* list the folder xfer_remote */
-	PSI_XOP_STAT            /* is xfer_remote there? (xfer_exists, xfer_total) */
+	PSI_XOP_STAT,           /* is xfer_remote there? (xfer_exists, xfer_total; 1.02: xfer_mtime) */
+	PSI_XOP_SAVE            /* (PsiTerm 1.02, the editor) xfer_local over xfer_remote, safely:
+	                           unless xfer_force, PSI_XFER_CHANGED if the server's file is
+	                           not the one opened (xfer_mtime and xfer_expect, its time and
+	                           size then; mtime 0 = a new file); written to a file beside it
+	                           and renamed over it where the server can (posix-rename), so a
+	                           dropped link never leaves half a file; then xfer_mtime and
+	                           xfer_total are the saved file's */
 	};
 
 /* ...and how it went (xfer_result) */
@@ -231,7 +243,8 @@ enum
 	PSI_XFER_LOCAL_READ,    /* the Psion file could not be opened or read */
 	PSI_XFER_LINK,          /* not logged in, or the connection went */
 	PSI_XFER_FAILED,        /* the server refused (xfer_msg says why) */
-	PSI_XFER_TIMEOUT        /* the server stopped answering */
+	PSI_XFER_TIMEOUT,       /* the server stopped answering */
+	PSI_XFER_CHANGED        /* (1.02) SAVE: the file changed on the server since it was opened */
 	};
 
 #endif

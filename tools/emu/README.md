@@ -60,6 +60,13 @@ python3 core/tools/emu/net.py web mail   # or some of: at web mail ssh
 | `ssh` | PsiTerm: Tools > SSH keys > Import `D:\PSIKEY`, SSH to a new server, accept the host key, run `echo` | the sshd accepted the key |
 | `browse` | PsiTerm 0.91's file view (Get file / Send file) over SFTP: folders opened in place, favourites, Up, Esc while listing, the Location pane's keys, Go to, the toolbar shown and hidden, a file got and one sent. `sftp-server` serves a test tree in `build/emu/net/bt` | `sftp.log` shows the folders listed, `hello.txt` read and a file written |
 
+`edit` (asked for by name) is PsiTerm 1.02's editor: Edit file on server
+(Shift+Ctrl+O) opens `hello.txt` (CR LF lines) from a test folder, text is
+typed at its start, Save (Ctrl+S), Go to line, Close. It passes when the
+server's file has the new text with its CR LF lines kept, and nothing is
+left beside it. (PsiTerm 1.02 opens on its Start view: the tests' first
+menu is that view's, and the terminal's menu bar then opens on File.)
+
 `tmux` (asked for by name) is PsiTerm 1.01's tmux: tmux settings > Start in
 tmux, SSH, then tmux > Windows > New window and View > Scroll > tmux history.
 The test sshd runs commands as asked, with tmux on a socket of its own
