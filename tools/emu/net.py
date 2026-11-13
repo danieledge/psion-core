@@ -442,6 +442,13 @@ def test_tmux(ctx):
     for _ in range(3):
         s.key(DOWN, gap=1)
     s.key(ENTER, gap=25)
+    # tmux > Sessions... (the tmux menu's 5th item; the bar opens on Edit)
+    s.key(ESC, gap=3).key(MENU, gap=2.5)
+    for _ in range(4):
+        s.key(RIGHT, gap=1.5)
+    for _ in range(4):
+        s.key(DOWN, gap=1)
+    s.key(ENTER, gap=8)
     out = emulate('tmux', card, ctx.sock, s, secs=int(os.environ.get('EMU_TMUX_SECS', 20)))
     env = dict(os.environ, TMUX_TMPDIR=tdir)
     env.pop('TMUX', None)

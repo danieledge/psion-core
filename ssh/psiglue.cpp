@@ -293,7 +293,7 @@ static const char* ErrWords(TInt aErr)
 	case -3003: return "the login to the Internet service failed";
 	case -3004: return "the login script timed out";
 	case -3005: return "the login script failed";
-	case -3006: return "no Internet service is set up (Control panel > Internet)";
+	case -3006: return "no Internet connection is chosen as the default - set one in Control panel > Internet";
 	case -3050: return "the Internet service refused the user name or password";
 	case -3051: return "the Internet service wants a more secure login";
 	case -3052: return "the Internet account is disabled";
@@ -830,7 +830,7 @@ static const char* ErrName(TInt aErr)
 	default:
 		if (aErr <= -5120 && aErr > -5200)
 			return "DNS lookup failed";
-		return 0;
+		return ErrWords(aErr);              // (the rest: -3006 no default Internet connection, -3050 login refused...)
 		}
 	}
 
