@@ -88,6 +88,9 @@ nothing had to be renamed and `git log` follows every file back:
 | `ssh/test/` | the host tests of the shared layer (`make -f test/Makefile.host test` in `ssh/`) |
 | `mail/compat/pmcompat.h`, `web/compat/` | the C-library shims for ESTLIB (headers it lacks, `nsprintf.c`) |
 | `mail/engine/img/` | the picture decoders (JPEG including progressive, PNG, GIF) to 16 greys, used by PsiMail and the Atom firmware's picture converter |
+| `mail/engine/cal/` | the calendar engine, shared by PsiMail and PsiSync: CalDAV (`caldav.c`) over HTTP (`http.c`), iCalendar (`ics.c`), time zones (`caltz.c`), XML (`xmlscan.c`), UTF-8 and Windows-1252 (`cp1252.c`), string helpers (`calutil.c`). `calport.h` is what a program gives it; `calacct.h` the layout of PsiMail's account and calendar settings |
+| `mail/engine/tlsv/` | the TLS certificate check (`certcheck.c`, RSA in `pmrsa.c`, the built-in roots in `roots.h`), linked into `ssh/tls13.c` built with `TLS_VERIFY`: PsiMail, PsiSync |
+| `mail/agenda/` | the Agenda half of the calendar (`pmcal.cpp`, `CPmCalSync`): the engine's events into the Psion's Agenda through the Agenda server, and the Agenda's changes back. PsiMail.app and PsiSync |
 | `mail/host/pgnet_host.c` | a PC stand-in for `psiglue.cpp`, for the engines' host builds and tests |
 | `web/engine/pwnet.c`, `.h` | one network connection at a time over psiglue: the HTTP client PsiWeb, PsiCast and the other single-connection programs use |
 | `web/tls/` | the X25519 field arithmetic, ChaCha20-Poly1305 and SHA-256 behind `tls13.c` (each program's own `tls/` folder adds its LibTomCrypt configuration) |
