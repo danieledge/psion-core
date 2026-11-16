@@ -264,6 +264,37 @@ static void out_alarm(Out *o, int minutes)
 	out_str(o, "END:VALARM");
 }
 
+/* (PsiSync) a series' rule and the dates taken out of it, after DTSTART */
+static void out_repeat(Out *o, const IcsChange *c, int zone)
+{
+	char l[200], d[24];
+	const char *p = c->exdates;
+	if (!c->series || !c->rrule[0]) return;
+	snprintf(l, sizeof(l), "RRULE:%s", c->rrule);
+	out_str(o, l);
+	while (*p) {
+		int n = 0;
+		char day[12];
+		while (p[n] && p[n] != ',' && n < 11) { day[n] = p[n]; n++; }
+		day[n] = 0;
+		p += n;
+		while (*p && *p != ',') p++;
+		if (*p == ',') p++;
+		if (n != 8) continue;
+		if (c->allday) snprintf(l, sizeof(l), "EXDATE;VALUE=DATE:%s", day);
+		else {
+			/* the instance's own start: that day at the series' time of day */
+			char t[16];
+			long at;
+			snprintf(t, sizeof(t), "%s0000", day);
+			at = cal_parse_local(t) + (c->start % 86400 + 86400) % 86400;
+			cal_fmt_utc(cal_local_to_utc(zone, at), d);
+			snprintf(l, sizeof(l), "EXDATE:%s", d);
+		}
+		out_str(o, l);
+	}
+}
+
 static void out_stamp(Out *o, const char *prop)
 {
 	char t[24], l[40];
@@ -286,6 +317,7 @@ int ics_new(const IcsChange *c, int zone, const char *uid, char *buf, int max)
 	out_stamp(&o, "DTSTAMP");
 	out_stamp(&o, "CREATED");
 	out_times(&o, c, zone);
+	out_repeat(&o, c, zone);
 	out_text(&o, "SUMMARY", c->summary);
 	if (c->location[0]) out_text(&o, "LOCATION", c->location);
 	if (c->alarm >= 0) out_alarm(&o, c->alarm);
@@ -461,6 +493,7 @@ static void write_event(Out *o, Obj *ob, int a, int b, const IcsChange *c, int z
 		}
 		if (is_prop(s, "DTSTART")) {
 			out_times(o, c, zone);
+			if (!as_exception) out_repeat(o, c, zone);
 			if (as_exception) {
 				snprintf(l, sizeof(l), strlen(recurid) == 8 ? "RECURRENCE-ID;VALUE=DATE:%s" : "RECURRENCE-ID:%s", recurid);
 				out_str(o, l);
@@ -476,6 +509,9 @@ static void write_event(Out *o, Obj *ob, int a, int b, const IcsChange *c, int z
 		}
 		if (as_exception && (is_prop(s, "RRULE") || is_prop(s, "RDATE") || is_prop(s, "EXDATE") ||
 		                     is_prop(s, "RECURRENCE-ID"))) continue;
+		/* a series' rule from the Psion replaces the server's */
+		if (!as_exception && c->series && c->rrule[0] &&
+		    (is_prop(s, "RRULE") || is_prop(s, "RDATE") || is_prop(s, "EXDATE"))) continue;
 		if (is_prop(s, "SUMMARY")) { out_text(o, "SUMMARY", c->summary); continue; }
 		if (is_prop(s, "LOCATION")) {
 			if (c->location[0]) out_text(o, "LOCATION", c->location);

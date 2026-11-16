@@ -85,6 +85,11 @@ typedef struct
 	int alarm;               /* minutes before, -1 none */
 	char summary[200];       /* cp1252 */
 	char location[120];      /* cp1252 */
+	/* (PsiSync) a repeating Agenda entry: the master's rule, replacing the
+	   server's RRULE, RDATE and EXDATE. series 0: leave them as they are */
+	int series;
+	char rrule[120];         /* "FREQ=WEEKLY;BYDAY=MO,TH" (cal_rrule) */
+	char exdates[240];       /* the instances taken out: local dates "20261201,20261208" */
 	} IcsChange;
 /* A new VCALENDAR (UTF-8) with one event. Returns length, -1 if too big. */
 int  ics_new(const IcsChange *c, int zone, const char *uid, char *out, int max);
@@ -94,6 +99,12 @@ int  ics_new(const IcsChange *c, int zone, const char *uid, char *out, int max);
 int  ics_change(char *buf, int len, int max, const char *recurid, const IcsChange *c, int zone);
 /* Removes one instance of a recurring event (EXDATE). Returns new length. */
 int  ics_exclude(char *buf, int len, int max, const char *recurid, int zone);
+
+/* ---- repeats (calrpt.c): calrpt.h, which C++ can include on its own */
+#include "calrpt.h"
+
+/* ---- time zones by name (calzone.c) */
+#include "calzone.h"
 
 /* ---- HTTP/1.1 over the engine's connection (http.c) */
 typedef struct

@@ -21,6 +21,8 @@
  *                             N TAB key TAB calid TAB start TAB end TAB flags TAB alarm TAB summary TAB location
  *                             M TAB key TAB href TAB etag TAB recurid TAB start TAB end TAB flags TAB alarm TAB summary TAB location
  *                             D TAB key TAB href TAB etag TAB recurid
+ *                             (PsiSync: N and M lines may end TAB R TAB rrule TAB exdates:
+ *                             a repeating Agenda entry, see cal_rrule)
  *   <store>cal\pushed.txt     what became of them: key TAB ok|gone|conflict|failed TAB href
  *
  * id is the FNV hash of the calendar's href. All text is Windows-1252.
@@ -486,6 +488,16 @@ static void read_change(char **p, IcsChange *c)
 	pm_copy(c->location, field(p), sizeof(c->location));
 }
 
+/* (PsiSync) a series: "R" TAB rrule TAB exdates, after the rest of the line */
+static void read_repeat(char **p, IcsChange *c)
+{
+	char *r = field(p);
+	if (r[0] != 'R') return;
+	pm_copy(c->rrule, field(p), sizeof(c->rrule));
+	pm_copy(c->exdates, field(p), sizeof(c->exdates));
+	c->series = c->rrule[0] != 0;
+}
+
 static void mark_fetch(const char *href)
 {
 	int i;
@@ -514,6 +526,7 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		/* the app names it, so a retry after a lost reply finds it there
 		   (If-None-Match) rather than making a second one */
 		pm_copy(uid, field(&p), sizeof(uid));
+		read_repeat(&p, &c);
 		for (i = 0; uid[i]; i++)
 			if (!((uid[i] >= '0' && uid[i] <= '9') || (uid[i] >= 'a' && uid[i] <= 'z') || (uid[i] >= 'A' && uid[i] <= 'Z') || uid[i] == '-')) uid[i] = '-';
 		if (!uid[0]) {
@@ -555,6 +568,7 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		g_obj[len] = 0;
 		if (op[0] == 'M') {
 			read_change(&p, &c);
+			read_repeat(&p, &c);
 			len = ics_change(g_obj, len, OBJ_MAX - 1, recurid, &c, g_t.zone);
 		} else len = ics_exclude(g_obj, len, OBJ_MAX - 1, recurid, g_t.zone);
 		if (len < 0) { pushed(res, key, "failed", href); return CAL_RES_OK; }
@@ -572,7 +586,7 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 
 static int push_changes(int *n, char *why, int whymax)
 {
-	char path[200], rpath[200], line[900];
+	char path[200], rpath[200], line[1400];   /* (a series' rule and dates: PsiSync) */
 	FILE *f, *res;
 	int rc = CAL_RES_OK, total = 0, done = 0;
 	*n = 0;

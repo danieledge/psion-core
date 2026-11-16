@@ -18,7 +18,14 @@
 #include <agclient.h>
 #include <agmsiter.h>
 #include <agmentry.h>
+#include <agmrptd.h>
+#include <agmexcpt.h>
+#include <agmdate.h>
 #include "pmcal.h"
+extern "C" {
+#include "calmerge.h"         // core/mail/engine/cal: the rules for each entry
+#include "calrpt.h"           // cal_rrule
+}
 
 _LIT(KMapFile, "agenda.txt");
 _LIT(KEventsFile, "events.txt");
@@ -30,6 +37,8 @@ _LIT8(KMapMagic, "#PSIAGN1");
 const TUint KMapPending = 1;       // made on the Psion, sent, not yet confirmed
 const TUint KMapDeleting = 2;      // deleted on the Psion, deletion sent
 const TUint KMapForce = 4;         // the server refused a change: put its version back
+const TUint KMapSeries = 8;        // (KPmCalOptRepeats) a repeating Agenda entry, the whole of an event
+                                   // on the server: key "href|*", hash of its etag
 
 const TInt KStep = 6;              // entries per step
 
@@ -116,6 +125,93 @@ static void AppendClean(TDes8& aOut, const TDesC8& aText)
 		TUint c = aText[i];
 		aOut.Append(c < 32 ? (TChar)' ' : (TChar)c);
 		}
+	}
+
+// (KPmCalOptRepeats) an Agenda entry's repeat as an RRULE and the dates
+// taken out of it ("20261201,20261208"); EFalse if it can't be said as one
+static TBool RepeatOf(CAgnEntry* aEntry, TBool aAllDay, TInt aZone, TDes8& aRule, TDes8& aExDates)
+	{
+	const CAgnRptDef* r = aEntry->RptDef();
+	if (!aEntry->IsRepeating() || !r)
+		return EFalse;
+	CalRepeat c;
+	Mem::FillZ(&c, sizeof(c));
+	c.type = r->Type();
+	c.interval = r->Interval();
+	c.forever = r->RepeatForever();
+	if (!c.forever)
+		{
+		// UNTIL: the last day, or the end of it in UTC (the Psion's own
+		// offset: an hour either way at midnight changes no instance)
+		TDateTime d = r->EndDate().DateTime();
+		TBuf8<20> u;
+		if (aAllDay)
+			u.Format(_L8("%04d%02d%02d"), d.Year(), d.Month() + 1, d.Day() + 1);
+		else
+			{
+			TTime end(TDateTime(d.Year(), d.Month(), d.Day(), 23, 59, 59, 0));
+			end -= TLocale().UniversalTimeOffset();
+			TDateTime e = end.DateTime();
+			u.Format(_L8("%04d%02d%02dT%02d%02d%02dZ"), e.Year(), e.Month() + 1, e.Day() + 1, e.Hour(), e.Minute(), e.Second());
+			}
+		Mem::Copy(c.until, u.Ptr(), u.Length());
+		c.until[u.Length()] = 0;
+		}
+	TInt i, w;
+	switch (r->Type())
+		{
+	case CAgnRptDef::EWeekly:
+		{
+		TAgnWeeklyRpt wk = r->Weekly();
+		for (i = 0; i < 7; i++)
+			if (wk.IsDaySet((TDay)i)) c.weekdays |= 1 << i;
+		}
+		break;
+	case CAgnRptDef::EMonthlyByDates:
+		{
+		TAgnMonthlyByDatesRpt md = r->MonthlyByDates();
+		for (i = 0; i < 31; i++)
+			if (md.IsDateSet(i)) c.dates |= 1UL << i;
+		}
+		break;
+	case CAgnRptDef::EMonthlyByDays:
+		{
+		TAgnMonthlyByDaysRpt mw = r->MonthlyByDays();
+		for (w = 0; w < 5; w++)
+			for (i = 0; i < 7; i++)
+				if (mw.IsDaySet((TDay)i, (TAgnRpt::TWeekInMonth)w)) c.weeks[w] |= 1 << i;
+		}
+		break;
+	case CAgnRptDef::EYearlyByDay:
+		{
+		TAgnYearlyByDayRpt yd = r->YearlyByDay();
+		TDay day;
+		TAgnRpt::TWeekInMonth week;
+		TMonth month;
+		TInt year;
+		yd.GetStartDay(day, week, month, year);
+		c.yday = day;
+		c.yweek = week;
+		c.ymonth = month;
+		}
+		break;
+	default:
+		break;
+		}
+	char rule[120];
+	(void)aZone;
+	if (cal_rrule(&c, rule, sizeof(rule)) < 0)
+		return EFalse;
+	aRule.Copy(TPtrC8((const TUint8*)rule));
+	aExDates.Zero();
+	const CAgnExceptionList* ex = r->Exceptions();
+	for (i = 0; ex && i < ex->Count() && aExDates.Length() + 9 < aExDates.MaxLength(); i++)
+		{
+		TDateTime d = AgnDateTime::AgnDateToTTime((*ex)[i].Date()).DateTime();
+		if (aExDates.Length()) aExDates.Append(',');
+		aExDates.AppendFormat(_L8("%04d%02d%02d"), d.Year(), d.Month() + 1, d.Day() + 1);
+		}
+	return ETrue;
 	}
 
 // ---------------------------------------------------------------- setup
@@ -209,7 +305,9 @@ void CPmCalSync::StartL(const TDesC& aStoreDir, const TPmCalSettings& aSettings)
 	iSettings = aSettings;
 	iDir = aStoreDir;
 	iDir.Append(_L("cal\\"));
-	iAdded = iChangedN = iRemoved = iSent = iFailed = 0;
+	iAdded = iChangedN = iRemoved = iSent = iFailed = iKept = 0;
+	iPushSeries = EFalse;
+	iGuarded = EFalse;
 	iPushedRead = EFalse;
 	iPhase = EOpen;
 	iPos = 0;
@@ -430,6 +528,24 @@ TInt CPmCalSync::FindEvent(const TDesC8& aKey) const
 		if (key == aKey) return i;
 		}
 	return -1;
+	}
+
+// (KMapSeries) the first of a series' instances in events.txt: key "href|*".
+// aMark: the instances are this map entry's (NewStepL leaves them alone)
+TInt CPmCalSync::FindSeries(const TDesC8& aKey, TInt aMark) const
+	{
+	if (aKey.Length() < 3 || aKey.Right(2) != _L8("|*"))
+		return -1;
+	TPtrC8 href = aKey.Left(aKey.Length() - 2);
+	TInt first = -1;
+	for (TInt i = 0; i < iEvents->Count(); i++)
+		{
+		TPmCalEvent& e = (*iEvents)[i];
+		if (Field(*e.iLine, 1) != href) continue;
+		if (first < 0) first = i;
+		if (aMark >= 0 && e.iMapped < 0) e.iMapped = aMark;
+		}
+	return first;
 	}
 
 TInt CPmCalSync::AddMapL(TUint32 aAuid, const TDesC8& aKey, TUint32 aHash, TUint aFlags)
@@ -777,7 +893,7 @@ TInt64 CPmCalSync::Changed(TUint32 aAuid)
 // the entry's details as a push.txt line
 void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const TDesC8& aEventLine)
 	{
-	HBufC8* buf = HBufC8::NewLC(900);
+	HBufC8* buf = HBufC8::NewLC(1300);
 	TPtr8 line = buf->Des();
 	line.Append(aOp);
 	line.Append(_L8("\ta"));
@@ -791,7 +907,8 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 		line.Append('\t');
 		line.Append(Field(aEventLine, 2));          // etag
 		line.Append('\t');
-		line.Append(Field(aEventLine, 3));          // recurid
+		if (!iPushSeries)
+			line.Append(Field(aEventLine, 3));      // recurid (a series: none, the whole event)
 		}
 	if (aOp != 'D')
 		{
@@ -848,6 +965,16 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 			AppendHex64(line, iSince);
 			line.Append('-');
 			line.AppendNum((TUint)aAuid, EDecimal);
+			}
+		// (KPmCalOptRepeats) a repeating entry: its rule and the dates out of it
+		TBuf8<120> rule;
+		TBuf8<240> ex;
+		if ((iSettings.iSpare[0] & KPmCalOptRepeats) && RepeatOf(aEntry, allday, iSettings.iCal.zone, rule, ex))
+			{
+			line.Append(_L8("\tR\t"));
+			line.Append(rule);
+			line.Append('\t');
+			line.Append(ex);
 			}
 		}
 	PushL(line);
@@ -967,9 +1094,10 @@ void CPmCalSync::ReadPushedL()
 				if (ok)
 					{
 					// now it has a place on the server
-					HBufC8* k = HBufC8::NewL(href.Length() + 1);
+					HBufC8* k = HBufC8::NewL(href.Length() + 2);
 					k->Des().Copy(href);
 					k->Des().Append('|');
+					if (m.iFlags & KMapSeries) k->Des().Append('*');
 					delete m.iKey;
 					m.iKey = k;
 					m.iHash = 0;
@@ -984,13 +1112,16 @@ void CPmCalSync::ReadPushedL()
 			else if (m.iFlags & KMapDeleting)
 				{
 				if (ok || what == _L8("gone")) RemoveMap(i);
-				else { m.iFlags = KMapForce; iFailed++; }
+				else { m.iFlags = KMapForce | (m.iFlags & KMapSeries); iFailed++; }
 				}
 			else if (!ok)
 				{
 				m.iFlags |= KMapForce;        // put the server's version back
 				if (what != _L8("gone")) iFailed++;
 				}
+			else if (m.iFlags & KMapSeries)
+				m.iHash = 0;                  // our change moved its etag: take the new one
+
 			break;
 			}
 		}
@@ -998,24 +1129,39 @@ void CPmCalSync::ReadPushedL()
 	iPushedRead = ETrue;                    // deleted once the links are saved
 	}
 
-// one batch of the entries we look after
+// one batch of the entries we look after: the facts about each go to
+// cal_merge (core/mail/engine/cal/calmerge.c, tested on a PC), which says
+// what to do
 TBool CPmCalSync::MappedStepL()
 	{
+	if (iPos == 0)
+		GuardCheck();
 	TBuf<60> prog;
 	prog.Format(_L("Updating the Agenda (%d%%)..."), iMap->Count() ? iPos * 50 / iMap->Count() : 50);
 	iObserver.CalProgress(prog);
+	TInt options = (iSettings.iSpare[0] & KPmCalOptKeepBoth) ? CM_OPT_KEEPBOTH : 0;
 	for (TInt n = 0; n < KStep && iPos < iMap->Count(); n++)
 		{
 		TPmCalMap& m = (*iMap)[iPos];
+		CmFacts f;
+		Mem::FillZ(&f, sizeof(f));
+		f.flags = m.iFlags;
 		if (m.iFlags & KMapPending)
 			{
 			iPos++;                            // sent, not confirmed yet (offline?)
 			continue;
 			}
-		TInt ev = FindEvent(*m.iKey);
-		if (ev >= 0 && (*iEvents)[ev].iMapped >= 0)
-			ev = -1;                           // two entries for one event: keep the first
-		if (ev >= 0) (*iEvents)[ev].iMapped = iPos;
+		TBool series = (m.iFlags & KMapSeries) != 0;
+		TInt ev;
+		if (series)
+			ev = FindSeries(*m.iKey, iPos);
+		else
+			{
+			ev = FindEvent(*m.iKey);
+			if (ev >= 0 && (*iEvents)[ev].iMapped >= 0)
+				ev = -1;                       // two entries for one event: keep the first
+			if (ev >= 0) (*iEvents)[ev].iMapped = iPos;
+			}
 		CAgnEntry* e = FetchL(m.iAuid);
 		TBool gone = e == NULL;
 		TTime start = Time::NullTTime();
@@ -1026,76 +1172,166 @@ TBool CPmCalSync::MappedStepL()
 			e = NULL;
 			}
 		TInt64 changed = gone ? TInt64(0) : Changed(m.iAuid);
-		TBool local = !gone && changed != m.iChanged;
-		if (m.iFlags & KMapDeleting)
+		f.gone = gone;
+		f.local_changed = !gone && changed != m.iChanged;
+		f.on_server = ev >= 0;
+		f.in_window = start == Time::NullTTime() || (start >= iWinStart && start < iWinEnd);
+		const TDesC8* line = NULL;
+		TUint32 hash = 0;
+		if (ev >= 0)
 			{
-			if (ev < 0) { RemoveMap(iPos); continue; }
-			iPos++;                            // waiting for the server
+			line = (*iEvents)[ev].iLine;
+			hash = (*iEvents)[ev].iHash;
+			f.readable = ParseTime(Field(*line, 5)) != Time::NullTTime() && ParseTime(Field(*line, 6)) != Time::NullTTime();
+			f.writable = Writable(*line);
+			if (series)
+				hash = Fnv(Field(*line, 2));   // a series: changed on the server when its etag moves
+			f.no_baseline = m.iHash == 0;
+			f.server_changed = hash != m.iHash;
+			}
+		TInt action = cal_merge(&f, options);
+		if (action == CM_DELETE_LOCAL && iGuarded)
+			action = CM_SKIP;                  // held back: see GuardCheck
+		if (f.on_server && f.readable && !f.gone && f.no_baseline && !(m.iFlags & KMapForce))
+			m.iHash = hash;                     // made here: the server's copy is ours
+		if (series && (action == CM_UPDATE_LOCAL || action == CM_KEEP_BOTH || action == CM_READD))
+			{
+			// the Agenda can't be given the server's series back as a repeat:
+			// its instances come in as entries of their own (NewStepL), and the
+			// Psion's series goes - unless it was changed here too, when it is
+			// kept, unlinked, and so sent again as new
+			if (action == CM_UPDATE_LOCAL)
+				{
+				DeleteL(m.iAuid);
+				iChangedN++;
+				}
+			else if (action == CM_KEEP_BOTH)
+				iKept++;
+			TPtrC8 key(*m.iKey);
+			TPtrC8 href = key.Left(key.Length() - 2);
+			for (TInt k = 0; k < iEvents->Count(); k++)
+				if (Field(*(*iEvents)[k].iLine, 1) == href) (*iEvents)[k].iMapped = -1;
+			RemoveMap(iPos);           // (iMapped is only "linked or not": the indexes may move)
 			continue;
 			}
-		if (ev < 0)
+		switch (action)
 			{
-			// not on the server (any more)
-			if (gone || (start != Time::NullTTime() && (start < iWinStart || start >= iWinEnd)))
-				{
-				RemoveMap(iPos);                // gone, or just old: the Psion keeps it
-				continue;
-				}
+		case CM_UNLINK:
+			RemoveMap(iPos);
+			continue;
+		case CM_DELETE_LOCAL:
 			DeleteL(m.iAuid);
 			iRemoved++;
 			RemoveMap(iPos);
 			continue;
-			}
-		const TDesC8& line = *(*iEvents)[ev].iLine;
-		TUint32 hash = (*iEvents)[ev].iHash;
-		if (ParseTime(Field(line, 5)) == Time::NullTTime() || ParseTime(Field(line, 6)) == Time::NullTTime())
-			{
-			iPos++;                            // a line we can't read: leave the entry be
-			continue;
-			}
-		TBool writable = Writable(line);
-		if (gone)
-			{
-			if (writable && !(m.iFlags & KMapForce))
-				{
-				PushEntryL('D', m.iAuid, NULL, line);
-				m.iFlags = KMapDeleting;
-				}
-			else
-				{
-				m.iAuid = AddFromEventL(line);    // can't delete it there: back it comes
-				m.iChanged = Changed(m.iAuid);
-				m.iHash = hash;
-				m.iFlags = 0;
-				iAdded++;
-				}
-			iPos++;
-			continue;
-			}
-		if (m.iHash == 0 && !(m.iFlags & KMapForce))
-			m.iHash = hash;                     // made here: the server's copy is ours
-		if (hash != m.iHash || (m.iFlags & KMapForce) || (local && !writable))
-			{
-			m.iAuid = UpdateFromEventL(m.iAuid, line);
+		case CM_PUSH_DELETE:
+			iPushSeries = series;
+			PushEntryL('D', m.iAuid, NULL, *line);
+			iPushSeries = EFalse;
+			m.iFlags = KMapDeleting | (series ? KMapSeries : 0);
+			break;
+		case CM_READD:
+			m.iAuid = AddFromEventL(*line);    // can't delete it there: back it comes
+			m.iChanged = Changed(m.iAuid);
+			m.iHash = hash;
+			m.iFlags = 0;
+			iAdded++;
+			break;
+		case CM_KEEP_BOTH:
+			// the Psion's version first, as an entry of its own: it is new
+			// to the server, so the next pass sends it
+			if (CopyEntryL(m.iAuid))
+				iKept++;
+			// then as CM_UPDATE_LOCAL
+		case CM_UPDATE_LOCAL:
+			m.iAuid = UpdateFromEventL(m.iAuid, *line);
 			m.iChanged = Changed(m.iAuid);
 			m.iHash = hash;
 			m.iFlags = 0;
 			iChangedN++;
-			}
-		else if (local)
+			break;
+		case CM_PUSH_CHANGE:
 			{
 			CAgnEntry* le = FetchL(m.iAuid);
 			if (le)
 				{
 				CleanupStack::PushL(le);
-				PushEntryL('M', m.iAuid, le, line);
+				iPushSeries = series;
+				PushEntryL('M', m.iAuid, le, *line);
+				iPushSeries = EFalse;
 				CleanupStack::PopAndDestroy();
 				}
 			m.iChanged = changed;
 			}
+			break;
+		default:
+			break;
+			}
 		iPos++;
 		}
 	return iPos < iMap->Count();
+	}
+
+// (KPmCalOptGuard) a half-read calendar, a server that lost its data or a
+// wrong account must not empty the Agenda: if more than half the linked
+// entries (and more than 10) would be deleted at once, none are, and the
+// summary says so. Deleting them by hand, or a sync that finds them back,
+// clears it.
+void CPmCalSync::GuardCheck()
+	{
+	iGuarded = EFalse;
+	if (!(iSettings.iSpare[0] & KPmCalOptGuard))
+		return;
+	TInt linked = 0, missing = 0;
+	for (TInt i = 0; i < iMap->Count(); i++)
+		{
+		const TPmCalMap& m = (*iMap)[i];
+		if (m.iFlags & (KMapPending | KMapDeleting))
+			continue;
+		linked++;
+		if ((m.iFlags & KMapSeries) ? FindSeries(*m.iKey, -1) < 0 : FindEvent(*m.iKey) < 0)
+			missing++;
+		}
+	iGuarded = missing > 10 && missing * 2 > linked;
+	}
+
+// a copy of an Agenda entry, as a new entry (not linked): returns its UID
+TUint32 CPmCalSync::CopyEntryL(TUint32 aAuid)
+	{
+	CAgnEntry* e = FetchL(aAuid);
+	if (!e)
+		return 0;
+	CleanupStack::PushL(e);
+	CAgnEntry* copy;
+	if (e->Type() == CAgnEntry::EAppt)
+		{
+		CAgnAppt* a = CAgnAppt::NewL(iPara, iChar);
+		copy = a;
+		CleanupStack::PushL(copy);
+		a->SetStartAndEndDateTime(e->CastToAppt()->StartDateTime(), e->CastToAppt()->EndDateTime());
+		}
+	else if (e->Type() == CAgnEntry::EEvent)
+		{
+		CAgnEvent* v = CAgnEvent::NewL(iPara, iChar);
+		copy = v;
+		CleanupStack::PushL(copy);
+		v->SetStartAndEndDate(e->CastToEvent()->StartDate(), e->CastToEvent()->EndDate());
+		}
+	else
+		{
+		CleanupStack::PopAndDestroy();       // e
+		return 0;
+		}
+	TBuf<200> text;
+	CRichText* rt = e->RichTextL();
+	rt->Extract(text, 0, Min(rt->DocumentLength(), text.MaxLength()));
+	copy->RichTextL()->InsertL(0, text);
+	copy->SetLocationL(e->Location());
+	if (e->HasAlarm())
+		copy->SetAlarm(e->AlarmDaysWarning(), e->AlarmTime());
+	TAgnEntryId id = iModel->AddEntryL(copy);
+	CleanupStack::PopAndDestroy(2);      // copy, e
+	return iServ->GetUniqueId(id).Id();
 	}
 
 // server events the Agenda doesn't have yet
@@ -1149,11 +1385,26 @@ TBool CPmCalSync::LocalStepL()
 		if (!e) continue;
 		CleanupStack::PushL(e);
 		TTime start = e->Type() == CAgnEntry::EAppt ? e->CastToAppt()->StartDateTime() : e->InstanceStartDate();
-		// repeating Psion entries stay on the Psion (for now)
+		// repeating Psion entries stay on the Psion, unless KPmCalOptRepeats:
+		// then they go as a series if their repeat can be said as an RRULE
+		// and the series has not ended before the window
 		if (!e->IsRepeating() && start >= iWinStart && start < iWinEnd)
 			{
 			PushEntryL('N', auid, e, KNullDesC8);
 			AddMapL(auid, KNullDesC8, 0, KMapPending);
+			}
+		else if (e->IsRepeating() && (iSettings.iSpare[0] & KPmCalOptRepeats) && start < iWinEnd &&
+			(e->RptDef()->RepeatForever() || e->RptDef()->EndDate() >= iWinStart))
+			{
+			TBuf8<120> rule;
+			TBuf8<240> ex;
+			TBool allday = e->Type() != CAgnEntry::EAppt;
+			if ((e->Type() == CAgnEntry::EAppt || e->Type() == CAgnEntry::EEvent) &&
+				RepeatOf(e, allday, iSettings.iCal.zone, rule, ex))
+				{
+				PushEntryL('N', auid, e, KNullDesC8);
+				AddMapL(auid, KNullDesC8, 0, KMapPending | KMapSeries);
+				}
 			}
 		CleanupStack::PopAndDestroy();
 		}
@@ -1186,6 +1437,10 @@ void CPmCalSync::FinishL()
 		msg.AppendFormat(_L("; sending %d change%s"), iSent, iSent == 1 ? _S("") : _S("s"));
 	if (iFailed)
 		msg.AppendFormat(_L("; %d not accepted by the server"), iFailed);
+	if (iKept)
+		msg.AppendFormat(_L("; %d changed on both: the Psion's kept as a copy"), iKept);
+	if (iGuarded)
+		msg.Append(_L("; many events gone from the server - none removed from the Agenda"));
 	Close();
 	Reset();
 	iPhase = EIdle;

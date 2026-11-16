@@ -44,8 +44,13 @@ struct TPmCalSettings
 	TBuf<128> iAgendaFile;     // C:\Documents\Agenda
 	TInt iAlarms;              // alarms come from the server (and go back)
 	TInt iCopyExisting;        // first sync: send the Psion's own entries too
-	TInt iSpare[8];
+	TInt iSpare[8];            // iSpare[0]: KPmCalOpt* (PsiSync; PsiMail leaves 0)
 	};
+
+// iSpare[0] (all off in PsiMail, which saves TPmCalSettings whole)
+const TInt KPmCalOptKeepBoth = 1;   // both sides changed: keep the Psion's as a new entry (calmerge.h)
+const TInt KPmCalOptRepeats = 2;    // repeating Agenda entries go to the server (RRULE)
+const TInt KPmCalOptGuard = 4;      // most entries gone from the server at once: delete none, say so
 
 class MPmCalObserver
 	{
@@ -103,6 +108,8 @@ private:
 	void OpenL();
 	void ReadPushedL();
 	TBool MappedStepL();
+	void GuardCheck();
+	TUint32 CopyEntryL(TUint32 aAuid);
 	TBool NewStepL();
 	TBool LocalStepL();
 	void FinishL();
@@ -118,6 +125,7 @@ private:
 	// events
 	TPtrC8 Field(const TDesC8& aLine, TInt aIndex) const;
 	TInt FindEvent(const TDesC8& aKey) const;
+	TInt FindSeries(const TDesC8& aKey, TInt aMark) const;
 	void EventKey(const TDesC8& aLine, TDes8& aKey) const;
 	TBool Writable(const TDesC8& aLine) const;
 	// Agenda entries
@@ -159,6 +167,9 @@ private:
 	TBool iNewFile;
 	// what happened
 	TInt iAdded, iChangedN, iRemoved, iSent, iFailed;
+	TInt iKept;                // both changed: the Psion's kept as a new entry
+	TBool iGuarded;            // deletions held back (KPmCalOptGuard)
+	TBool iPushSeries;         // PushEntryL: the whole of a series (no recurid)
 	};
 
 #endif
