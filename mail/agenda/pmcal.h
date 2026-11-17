@@ -51,6 +51,7 @@ struct TPmCalSettings
 const TInt KPmCalOptKeepBoth = 1;   // both sides changed: keep the Psion's as a new entry (calmerge.h)
 const TInt KPmCalOptRepeats = 2;    // repeating Agenda entries go to the server (RRULE)
 const TInt KPmCalOptGuard = 4;      // most entries gone from the server at once: delete none, say so
+const TInt KPmCalOptStamp = 8;      // an entry's change told by a hash of what it shows, not the Agenda's minute-long date
 
 class MPmCalObserver
 	{
@@ -133,6 +134,7 @@ private:
 	// Agenda entries
 	CAgnEntry* FetchL(TUint32 aAuid);
 	TInt64 Changed(TUint32 aAuid);
+	TInt64 DateChanged(TUint32 aAuid);
 	TUint32 AddFromEventL(const TDesC8& aLine);
 	TUint32 UpdateFromEventL(TUint32 aAuid, const TDesC8& aLine);
 	void FillL(CAgnEntry* aEntry, const TDesC8& aLine, const TTime& aStart);

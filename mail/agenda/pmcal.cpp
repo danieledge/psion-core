@@ -884,10 +884,52 @@ CAgnEntry* CPmCalSync::FetchL(TUint32 aAuid)
 	return err == KErrNone ? e : NULL;
 	}
 
-TInt64 CPmCalSync::Changed(TUint32 aAuid)
+// (KPmCalOptStamp) what tells us the user changed an entry: a hash of what
+// the Agenda shows of it, marked in the top word. The Agenda's own
+// last-changed date counts whole minutes, so an edit in the minute of a
+// sync was missed; and the emulator's clock creeps. PsiMail keeps the date.
+const TInt KStampMark = 0x48415348;         // 'HASH'
+
+TInt64 CPmCalSync::DateChanged(TUint32 aAuid)
 	{
 	TTime t = iServ->UniqueIdLastChangedDate(TAgnUniqueId(aAuid));
 	return t.Int64();
+	}
+
+TInt64 CPmCalSync::Changed(TUint32 aAuid)
+	{
+	if (!(iSettings.iSpare[0] & KPmCalOptStamp))
+		return DateChanged(aAuid);
+	CAgnEntry* e = FetchL(aAuid);
+	if (!e)
+		return TInt64(0);
+	CleanupStack::PushL(e);
+	TUint32 h = 2166136261u;
+	TBuf8<300> d;
+	d.AppendNum((TInt)e->Type());
+	TTime s, en;
+	if (e->Type() == CAgnEntry::EAppt) { s = e->CastToAppt()->StartDateTime(); en = e->CastToAppt()->EndDateTime(); }
+	else if (e->Type() == CAgnEntry::EEvent || e->Type() == CAgnEntry::EAnniv) { s = e->CastToEvent()->StartDate(); en = e->CastToEvent()->EndDate(); }
+	else { s = e->InstanceStartDate(); en = s; }
+	AppendHex64(d, s.Int64());
+	AppendHex64(d, en.Int64());
+	if (e->HasAlarm()) AppendHex64(d, e->AlarmInstanceDateTime().Int64());
+	d.Append(e->IsRepeating() ? 'R' : '-');
+	TBuf<200> text;
+	CRichText* rt = e->RichTextL();
+	rt->Extract(text, 0, Min(rt->DocumentLength(), text.MaxLength()));
+	TBuf8<200> t8;
+	t8.Copy(text);
+	TBuf8<120> loc;
+	loc.Copy(Clip(e->Location(), 110));
+	CleanupStack::PopAndDestroy();       // e
+	for (TInt i = 0; i < 3; i++)
+		{
+		const TDesC8& part = i == 0 ? (const TDesC8&)d : i == 1 ? (const TDesC8&)t8 : (const TDesC8&)loc;
+		for (TInt k = 0; k < part.Length(); k++) { h ^= part[k]; h *= 16777619u; }
+		h ^= 0xff; h *= 16777619u;
+		}
+	return TInt64(KStampMark, h);
 	}
 
 // the entry's details as a push.txt line
@@ -1173,7 +1215,16 @@ TBool CPmCalSync::MappedStepL()
 			}
 		TInt64 changed = gone ? TInt64(0) : Changed(m.iAuid);
 		f.gone = gone;
-		f.local_changed = !gone && changed != m.iChanged;
+		if ((iSettings.iSpare[0] & KPmCalOptStamp) && !gone && m.iChanged.High() != KStampMark)
+			{
+			// a link from before (PsiMail's, or an older pass): judged by its
+			// date this once, then kept by its stamp
+			f.local_changed = DateChanged(m.iAuid) != m.iChanged;
+			if (!f.local_changed)
+				m.iChanged = changed;
+			}
+		else
+			f.local_changed = !gone && changed != m.iChanged;
 		f.on_server = ev >= 0;
 		f.in_window = start == Time::NullTTime() || (start >= iWinStart && start < iWinEnd);
 		const TDesC8* line = NULL;
@@ -1387,7 +1438,16 @@ TBool CPmCalSync::LocalStepL()
 		AppendHex64(l, iSince);
 		iObserver.CalLog(l);
 		}
-		if (changed.Int64() <= iSince) continue;
+		// (the Agenda's dates are whole minutes: one changed in the minute
+		// sync was turned on is taken too)
+		if (iSettings.iSpare[0] & KPmCalOptStamp)
+			{
+			TDateTime dt = TTime(iSince).DateTime();
+			dt.SetSecond(0);
+			dt.SetMicroSecond(0);
+			if (changed < TTime(dt)) continue;
+			}
+		else if (changed.Int64() <= iSince) continue;
 		TBool known = EFalse;
 		for (TInt i = 0; i < iMap->Count() && !known; i++)
 			if ((*iMap)[i].iAuid == auid) known = ETrue;
