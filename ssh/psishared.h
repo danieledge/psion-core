@@ -165,7 +165,8 @@ typedef struct
 	   (AT$TLS), so the engine dials the TLS port in plain and speaks
 	   plaintext - no TLS 1.3 on the 36 MHz ARM. Ignored on the Psion
 	   Internet (PPP) route, where the engine always does its own TLS. Only
-	   PsiMail reads it (SSH is never wrapped, PsiWeb offloads via the proxy). */
+	   PsiMail reads it, and from 0.90 PsiWeb, for https on port 443
+	   (its engine/pwatom.h). SSH is never wrapped. */
 	int modem_tls;
 	/* (logging switch, October 2026) 1 = the person has ticked the app's
 	   "Keep a log": the engine writes its log file, psiglue makes the OS's
