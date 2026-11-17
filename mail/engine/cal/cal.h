@@ -66,7 +66,13 @@ typedef struct
 	int alarm;               /* minutes before the start, -1 = none */
 	int recurring;           /* has RRULE/RDATE (a master) */
 	int cancelled;
+	/* (PsiSync's sidecar) */
+	char tzid[48];           /* DTSTART's TZID, "" if UTC, a date or floating */
+	char organizer[120];     /* "Name <email>" (cp1252) */
+	char attendees[400];     /* "Name <email> S;..." S: A accepted, D declined, T tentative, N needs action */
 	} IcsEvent;
+/* a PARTSTAT as A, D, T or N (0 if none) */
+char ics_partstat_letter(const char *partstat);
 /* calls fn for every VEVENT in the (UTF-8) text; returns how many */
 int  ics_each(const char *text, int len, void (*fn)(const IcsEvent *e, void *ctx), void *ctx);
 
@@ -97,6 +103,11 @@ int  ics_new(const IcsChange *c, int zone, const char *uid, char *out, int max);
    event if recurid is "", else that instance (added as an exception if the
    object has none). Returns the new length, -1 if impossible. */
 int  ics_change(char *buf, int len, int max, const char *recurid, const IcsChange *c, int zone);
+/* (PsiSync: an invitation's reply) sets the PARTSTAT of the ATTENDEE whose
+   address is email (A, D or T) in the instance recurid ("" the master, or
+   the master if that instance has no exception); RSVP is dropped.
+   Returns the new length, -1 if that attendee isn't there. */
+int  ics_partstat(char *buf, int len, int max, const char *recurid, const char *email, char status);
 /* Removes one instance of a recurring event (EXDATE). Returns new length. */
 int  ics_exclude(char *buf, int len, int max, const char *recurid, int zone);
 

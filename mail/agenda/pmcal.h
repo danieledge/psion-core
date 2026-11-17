@@ -51,6 +51,7 @@ struct TPmCalSettings
 const TInt KPmCalOptKeepBoth = 1;   // both sides changed: keep the Psion's as a new entry (calmerge.h)
 const TInt KPmCalOptRepeats = 2;    // repeating Agenda entries go to the server (RRULE)
 const TInt KPmCalOptGuard = 4;      // most entries gone from the server at once: delete none, say so
+const TInt KPmCalOptSidecar = 16;   // write sidecar.txt (calendar, colour, zone, attendees per entry: psion-netbook docs/agenda-sync-contract.md)
 const TInt KPmCalOptStamp = 8;      // an entry's change told by a hash of what it shows, not the Agenda's minute-long date
 
 class MPmCalObserver
@@ -116,6 +117,7 @@ private:
 	TBool NewStepL();
 	TBool LocalStepL();
 	void FinishL();
+	void SidecarL();
 	// files
 	void Path(const TDesC& aName, TDes& aPath) const;
 	HBufC8* ReadFileL(const TDesC& aName);

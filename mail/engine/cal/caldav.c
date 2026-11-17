@@ -10,11 +10,16 @@
  * the Agenda and notices what the user changes there.
  *
  *   <store>cal\calendars.txt  "#PSICAL1 TAB home", then per calendar:
- *                             id TAB sync(0/1) TAB ctag TAB href TAB flags TAB name
+ *                             id TAB sync(0/1) TAB ctag TAB href TAB flags TAB name TAB colour
+ *                             (colour: RRGGBB, the calendar's calendar-color, "" none)
  *                             (flags: W writable, D where new events go)
  *   <store>cal\events.txt     "#PSIEV1 TAB first day TAB zone", then per instance:
  *                             calid TAB href TAB etag TAB recurid TAB flags TAB
  *                             start TAB end TAB alarm TAB summary TAB location
+ *                             TAB tzid TAB my status TAB organiser TAB attendees
+ *                             (PsiSync's sidecar: the event's TZID; A D T N or ""
+ *                             as for "Name <email> S;..." attendees; only the
+ *                             first ten fields are hashed, as before)
  *                             (times local, YYYYMMDDHHMM; flags: A all day,
  *                             R one of a series; alarm: minutes before, -1 none)
  *   <store>cal\push.txt       (app) changes to send, one per line:
@@ -42,6 +47,7 @@ typedef struct
 	char href[200];
 	char flags[8];
 	char name[64];
+	char colour[8];          /* (PsiSync) CalDAV's calendar-color as RRGGBB, "" none */
 	int seen;                /* in the server's latest list */
 	int fetch;               /* events to be fetched this time */
 	} Cal;
@@ -132,6 +138,7 @@ static void load_cals(void)
 			pm_copy(c->href, field(&p), sizeof(c->href));
 			pm_copy(c->flags, field(&p), sizeof(c->flags));
 			pm_copy(c->name, field(&p), sizeof(c->name));
+			pm_copy(c->colour, field(&p), sizeof(c->colour));
 		}
 	}
 	fclose(f);
@@ -148,7 +155,7 @@ static int save_cals(void)
 	fprintf(f, "#PSICAL1\t%s\t%s\n", g_home, g_where);
 	for (i = 0; i < g_ncal; i++) {
 		Cal *c = &g_cal[i];
-		fprintf(f, "%s\t%d\t%s\t%s\t%s\t%s\n", c->id, c->sync, c->ctag, c->href, c->flags, c->name);
+		fprintf(f, "%s\t%d\t%s\t%s\t%s\t%s\t%s\n", c->id, c->sync, c->ctag, c->href, c->flags, c->name, c->colour);
 	}
 	if (pm_fclose(f) != 0 || pm_replace(tmp, path) != 0) { remove(tmp); return -1; }
 	st_changed();
@@ -181,7 +188,7 @@ typedef struct
 	char etag[100];
 	char name[64];
 	char ctag[100];
-	char color[16];
+	char color[16];          /* calendar-color, "#RRGGBB" or "#RRGGBBAA" */
 	int is_cal, vevent, comps, writable;
 	int got_data;
 	int ndata;
@@ -276,6 +283,7 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 	} else if (!strcmp(name, "calendar") && !strcmp(xs_parent(x, 1), "resourcetype")) d->is_cal = 1;
 	else if (!strcmp(name, "displayname")) { cs_utf8_to_cp1252(text, len, d->name, sizeof(d->name)); trim(d->name); clean(d->name); }
 	else if (!strcmp(name, "getctag")) { pm_copy(d->ctag, text, sizeof(d->ctag)); trim(d->ctag); clean(d->ctag); }
+	else if (!strcmp(name, "calendar-color")) { pm_copy(d->color, text, sizeof(d->color)); trim(d->color); clean(d->color); }
 	else if (!strcmp(name, "comp") && !strcmp(xs_parent(x, 1), "supported-calendar-component-set")) {
 		d->comps = 1;
 		if (pm_stristr(x->tag, "VEVENT")) d->vevent = 1;
@@ -298,9 +306,11 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 				pm_copy(c->name, d->name[0] ? d->name : "Calendar", sizeof(c->name));
 				c->flags[0] = 0;
 				if (d->writable) strcat(c->flags, "W");
+				c->colour[0] = 0;
+				if (d->color[0] == '#' && strlen(d->color) >= 7) { memcpy(c->colour, d->color + 1, 6); c->colour[6] = 0; }
 			}
 		}
-		d->href[0] = d->name[0] = d->ctag[0] = 0;
+		d->href[0] = d->name[0] = d->ctag[0] = d->color[0] = 0;
 		d->is_cal = d->vevent = d->comps = d->writable = 0;
 	}
 }
@@ -318,7 +328,7 @@ static int list_calendars(char *why, int whymax)
 	memset(g_dav, 0, sizeof(*g_dav));
 	res = propfind(g_home, 1,
 		"<D:resourcetype/><D:displayname/><CS:getctag/><C:supported-calendar-component-set/>"
-		"<D:current-user-privilege-set/>", g_dav, list_end, &r, why, whymax);
+		"<D:current-user-privilege-set/><A:calendar-color/>", g_dav, list_end, &r, why, whymax);
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) {
 		if (r.status == 404) { snprintf(why, whymax, "No calendars found at %.60s", g_home); g_home[0] = 0; save_cals(); }
@@ -371,8 +381,18 @@ static void one_event(const IcsEvent *e, void *ctx)
 	pm_copy(location, e->location, sizeof(location));
 	clean(summary);
 	clean(location);
-	fprintf(d->out, "%s\t%s\t%s\t%s\t%s%s\t%s\t%s\t%d\t%s\t%s\n", d->calid, d->href, d->etag, e->recurid,
-		e->allday ? "A" : "", (e->recurid[0] || e->recurring) ? "R" : "", a, b, e->alarm, summary, location);
+	{
+		/* my status: the attendee whose address is the account's */
+		char mine[4] = "";
+		const char *at = g_t.user && g_t.user[0] ? pm_stristr(e->attendees, g_t.user) : 0;
+		if (at) {
+			at += strlen(g_t.user);
+			if (at[0] == '>' && at[1] == ' ' && at[2]) { mine[0] = at[2]; mine[1] = 0; }
+		}
+		fprintf(d->out, "%s\t%s\t%s\t%s\t%s%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", d->calid, d->href, d->etag, e->recurid,
+			e->allday ? "A" : "", (e->recurid[0] || e->recurring) ? "R" : "", a, b, e->alarm, summary, location,
+			e->tzid, mine, e->organizer, e->attendees);
+	}
 	d->count++;
 }
 
@@ -426,7 +446,8 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 		"<C:prop name=\"UID\"/><C:prop name=\"SUMMARY\"/><C:prop name=\"LOCATION\"/>"
 		"<C:prop name=\"DTSTART\"/><C:prop name=\"DTEND\"/><C:prop name=\"DURATION\"/>"
 		"<C:prop name=\"RECURRENCE-ID\"/><C:prop name=\"RRULE\"/><C:prop name=\"RDATE\"/>"
-		"<C:prop name=\"STATUS\"/><C:comp name=\"VALARM\"><C:allprop/></C:comp></C:comp></C:comp>"
+		"<C:prop name=\"STATUS\"/><C:prop name=\"ORGANIZER\"/><C:prop name=\"ATTENDEE\"/>"
+		"<C:comp name=\"VALARM\"><C:allprop/></C:comp></C:comp></C:comp>"
 		"<C:expand start=\"%s\" end=\"%s\"/></C:calendar-data></D:prop>"
 		"<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VEVENT\">"
 		"<C:time-range start=\"%s\" end=\"%s\"/></C:comp-filter></C:comp-filter></C:filter>"
@@ -545,6 +566,28 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		pm_log("caldav: new %s -> %d", href, r.status);
 		return CAL_RES_OK;
 	}
+	if (op[0] == 'P') {
+		/* (PsiSync) an invitation's reply: P TAB key TAB href TAB etag TAB recurid TAB A|D|T */
+		char *h = field(&p), *etag = field(&p), *recurid = field(&p), *st = field(&p);
+		pm_copy(href, h, sizeof(href));
+		mark_fetch(href);
+		len = 0;
+		rc = http_request("GET", href, "", 0, 0, &r, body_to_obj, &len, why, whymax);
+		if (rc != CAL_RES_OK) return rc;
+		if (r.status == 404) { pushed(res, key, "gone", href); return CAL_RES_OK; }
+		if (r.status != 200 || len >= OBJ_MAX - 1) { pushed(res, key, "failed", href); return CAL_RES_OK; }
+		(void)etag;                  /* (a reply goes on the server's latest copy) */
+		g_obj[len] = 0;
+		len = ics_partstat(g_obj, len, OBJ_MAX - 1, recurid, g_t.user, st[0]);
+		if (len < 0) { pushed(res, key, "failed", href); return CAL_RES_OK; }
+		snprintf(hdr, sizeof(hdr), "Content-Type: text/calendar; charset=utf-8\r\n%s%s%s",
+			r.etag[0] ? "If-Match: " : "", r.etag, r.etag[0] ? "\r\n" : "");
+		rc = http_request("PUT", href, hdr, g_obj, len, &r, 0, 0, why, whymax);
+		if (rc != CAL_RES_OK) return rc;
+		pushed(res, key, r.status / 100 == 2 ? "ok" : r.status == 412 ? "conflict" : "failed", href);
+		pm_log("caldav: reply %c %s -> %d", st[0], href, r.status);
+		return CAL_RES_OK;
+	}
 	if (op[0] == 'M' || op[0] == 'D') {
 		char *h = field(&p), *etag = field(&p), *recurid = field(&p);
 		pm_copy(href, h, sizeof(href));
@@ -637,7 +680,7 @@ static int push_changes(int *n, char *why, int whymax)
    events.txt; returns 0 if it can't be used (a new day, another zone) */
 static int keep_old(FILE *out, const char *first_day)
 {
-	char path[200], line[900], head[60];
+	char path[200], line[2000], head[60];
 	FILE *f;
 	int zone = g_t.zone;
 	path_of("events.txt", path, sizeof(path));

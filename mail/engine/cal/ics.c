@@ -121,6 +121,45 @@ static void norm_recurid(const char *params, const char *v, int zone, char *out)
 	cal_fmt_utc(t, out);
 }
 
+/* a parameter's value ("CN" in params "CN=\"A B\";PARTSTAT=X"), unquoted */
+static void param_value(const char *params, const char *key, char *out, int max)
+{
+	const char *p = params;
+	int n = (int)strlen(key), k = 0;
+	out[0] = 0;
+	while (*p) {
+		if (!pm_strncasecmp(p, key, n) && p[n] == '=' && (p == params || p[-1] == ';')) {
+			const char *v = p + n + 1;
+			int q = *v == '"';
+			if (q) v++;
+			while (*v && k < max - 1 && (q ? *v != '"' : (*v != ';' && *v != ':'))) out[k++] = *v++;
+			out[k] = 0;
+			return;
+		}
+		p++;
+	}
+}
+
+char ics_partstat_letter(const char *ps)
+{
+	if (!pm_strcasecmp(ps, "ACCEPTED")) return 'A';
+	if (!pm_strcasecmp(ps, "DECLINED")) return 'D';
+	if (!pm_strcasecmp(ps, "TENTATIVE")) return 'T';
+	if (!pm_strcasecmp(ps, "NEEDS-ACTION")) return 'N';
+	return 0;
+}
+
+/* "Name <email>" in cp1252, tabs and ';' out (they separate our fields) */
+static void person(const char *params, const char *v, char *out, int max)
+{
+	char cn[120], cp[120], *t;
+	param_value(params, "CN", cn, sizeof(cn));
+	cs_utf8_to_cp1252(cn, (int)strlen(cn), cp, sizeof(cp));
+	if (!pm_strncasecmp(v, "mailto:", 7)) v += 7;
+	snprintf(out, max, "%s%s<%s>", cp, cp[0] ? " " : "", v);
+	for (t = out; *t; t++) if (*t == '\t' || *t == ';' || *t == '\r' || *t == '\n') *t = ' ';
+}
+
 int ics_each(const char *text, int len, void (*fn)(const IcsEvent *e, void *ctx), void *ctx)
 {
 	static char line[LINE_MAX_ICS];
@@ -172,11 +211,21 @@ int ics_each(const char *text, int len, void (*fn)(const IcsEvent *e, void *ctx)
 		else if (!strcmp(name, "RRULE") || !strcmp(name, "RDATE")) e.recurring = 1;
 		else if (!strcmp(name, "STATUS")) e.cancelled = !pm_strcasecmp(v, "CANCELLED");
 		else if (!strcmp(name, "RECURRENCE-ID")) norm_recurid(params, v, 0, e.recurid);
+		else if (!strcmp(name, "ORGANIZER")) person(params, v, e.organizer, sizeof(e.organizer));
+		else if (!strcmp(name, "ATTENDEE")) {
+			char p[120], ps[24];
+			int n = (int)strlen(e.attendees);
+			person(params, v, p, sizeof(p));
+			param_value(params, "PARTSTAT", ps, sizeof(ps));
+			snprintf(e.attendees + n, sizeof(e.attendees) - n, "%s%s %c", n ? ";" : "", p,
+				ics_partstat_letter(ps) ? ics_partstat_letter(ps) : 'N');
+		}
 		else if (!strcmp(name, "DTSTART") || !strcmp(name, "DTEND")) {
 			long t;
 			int utc, date_only;
 			if (cal_parse_time(v, &t, &utc, &date_only) != 0) continue;
 			if (!strcmp(name, "DTSTART")) {
+				param_value(params, "TZID", e.tzid, sizeof(e.tzid));
 				e.start = t;
 				e.allday = date_only;
 				e.floating = !utc && !date_only;
@@ -557,6 +606,56 @@ int ics_change(char *buf, int len, int max, const char *recurid, const IcsChange
 	free(ob->text);
 	free(ob);
 	if (o.bad) { free(o.b); return -1; }
+	memcpy(buf, o.b, o.n);
+	buf[o.n] = 0;
+	free(o.b);
+	return o.n;
+}
+
+int ics_partstat(char *buf, int len, int max, const char *recurid, const char *email, char status)
+{
+	Obj *ob = (Obj *)malloc(sizeof(Obj));
+	Out o;
+	int i, target, done = 0, n = (int)strlen(email);
+	const char *ps = status == 'A' ? "ACCEPTED" : status == 'D' ? "DECLINED" : status == 'T' ? "TENTATIVE" : 0;
+	if (!ob || !ps || !n) { free(ob); return -1; }
+	if (load(ob, buf, len, 0) != 0) { free(ob); return -1; }
+	target = find_block(ob, recurid);
+	if (target < 0) target = find_block(ob, "");
+	o.b = (char *)malloc(max + 1); o.n = 0; o.max = max; o.bad = 0;
+	if (!o.b || target < 0) { free(o.b); free(ob->text); free(ob); return -1; }
+	for (i = 0; i < ob->nlines; i++) {
+		const char *s = L(ob, i);
+		const char *at = pm_stristr(s, email);
+		if (i > ob->block[target].start && i < ob->block[target].end && is_prop(s, "ATTENDEE") && at &&
+		    (at[n] == 0 || at[n] == '"' || at[n] == ';')) {
+			/* the line again: PARTSTAT and RSVP out, ours in */
+			char l[600], name[40], params[300], np[300];
+			const char *v = split_prop(s, name, sizeof(name), params, sizeof(params));
+			const char *p = params;
+			int k = 0;
+			np[0] = 0;
+			while (*p) {
+				const char *e2 = p;
+				int quote = 0, m;
+				while (*e2 && (quote || *e2 != ';')) { if (*e2 == '"') quote = !quote; e2++; }
+				m = (int)(e2 - p);
+				if (pm_strncasecmp(p, "PARTSTAT=", 9) && pm_strncasecmp(p, "RSVP=", 5) && m > 0 && k + m + 2 < (int)sizeof(np)) {
+					np[k++] = ';';
+					memcpy(np + k, p, m); k += m; np[k] = 0;
+				}
+				p = *e2 ? e2 + 1 : e2;
+			}
+			snprintf(l, sizeof(l), "ATTENDEE;PARTSTAT=%s%s:%s", ps, np, v);
+			out_str(&o, l);
+			done = 1;
+			continue;
+		}
+		out_str(&o, s);
+	}
+	free(ob->text);
+	free(ob);
+	if (o.bad || !done) { free(o.b); return -1; }
 	memcpy(buf, o.b, o.n);
 	buf[o.n] = 0;
 	free(o.b);

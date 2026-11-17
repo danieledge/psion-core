@@ -504,7 +504,9 @@ void CPmCalSync::LoadEventsL()
 			Field(line, 3).Length() + 4;
 		if (skip > line.Length())
 			continue;                         // not a whole line
-		TPtrC8 hashed = line.Mid(skip);       // flags .. location
+		TPtrC8 hashed = line.Mid(skip);       // flags .. location (the ten fields PsiMail has always had:
+		for (TInt f = 0, at = 0; at < hashed.Length(); at++)     //  not the sidecar's after them)
+			if (hashed[at] == '\t' && ++f == 6) { hashed.Set(hashed.Left(at)); break; }
 		e.iHash = Fnv(hashed);
 		e.iMapped = -1;
 		e.iLine = line.AllocLC();
@@ -1482,8 +1484,76 @@ TBool CPmCalSync::LocalStepL()
 	return it->Available();
 	}
 
+// (KPmCalOptSidecar) sidecar.txt, for Coda's Agenda features: per linked
+// entry its calendar, the calendar's colour, the event's time zone, your
+// status and the organiser and attendees (psion-netbook's
+// docs/agenda-sync-contract.md). Written whole, then put in place.
+void CPmCalSync::SidecarL()
+	{
+	HBufC8* cals = ReadFileL(KCalsFile);
+	if (cals) CleanupStack::PushL(cals);
+	CDesC8ArrayFlat* out = new(ELeave) CDesC8ArrayFlat(32);
+	CleanupStack::PushL(out);
+	TBuf8<200> head(_L8("#PSISC1\t"));
+	TBuf8<130> file;
+	file.Copy(Clip(iSettings.iAgendaFile, 128));
+	head.Append(file);
+	out->AppendL(head);
+	HBufC8* buf = HBufC8::NewLC(1200);
+	for (TInt i = 0; i < iMap->Count(); i++)
+		{
+		const TPmCalMap& m = (*iMap)[i];
+		if (m.iFlags & (KMapPending | KMapDeleting)) continue;
+		TInt ev = (m.iFlags & KMapSeries) ? FindSeries(*m.iKey, -1) : FindEvent(*m.iKey);
+		if (ev < 0) continue;
+		const TDesC8& line = *(*iEvents)[ev].iLine;
+		TPtrC8 calid = Field(line, 0);
+		TPtrC8 name, colour;
+		if (cals)
+			{
+			TLines lines(*cals);
+			TPtrC8 l;
+			while (lines.Next(l))
+				if (l.Length() && l[0] != '#' && Field(l, 0) == calid) { name.Set(Field(l, 5)); colour.Set(Field(l, 6)); break; }
+			}
+		TPtr8 o = buf->Des();
+		o.Zero();
+		o.AppendNum((TUint)m.iAuid, EDecimal);
+		o.Append('\t'); o.Append(Clip(calid, 12));
+		o.Append('\t'); o.Append(Clip(name, 64));
+		o.Append('\t'); o.Append(Clip(colour, 6));
+		o.Append('\t'); o.Append(Clip(Field(line, 10), 47));
+		o.Append('\t'); o.Append(Clip(Field(line, 11), 1));
+		o.Append('\t'); o.Append(Clip(Field(line, 12), 119));
+		o.Append('\t'); o.Append(Clip(Field(line, 13), 400));
+		out->AppendL(o);
+		}
+	CleanupStack::PopAndDestroy();          // buf
+	TFileName path, tmp;
+	Path(_L("sidecar.txt"), path);
+	Path(_L("sidecar.tmp"), tmp);
+	RFile f;
+	User::LeaveIfError(f.Replace(iFs, tmp, EFileWrite));
+	CleanupClosePushL(f);
+	for (TInt k = 0; k < out->Count(); k++)
+		{
+		User::LeaveIfError(f.Write((*out)[k]));
+		User::LeaveIfError(f.Write(_L8("\n")));
+		}
+	User::LeaveIfError(f.Flush());
+	CleanupStack::PopAndDestroy();          // f
+	User::LeaveIfError(iFs.Replace(tmp, path));
+	CleanupStack::PopAndDestroy();          // out
+	if (cals) CleanupStack::PopAndDestroy();
+	}
+
 void CPmCalSync::FinishL()
 	{
+	if (iSettings.iSpare[0] & KPmCalOptSidecar)
+		{
+		TRAPD(err, SidecarL());               // (Coda's features do without it)
+		if (err != KErrNone) { TBuf8<40> l; l.Format(_L8("agenda: sidecar not written (%d)"), err); iObserver.CalLog(l); }
+		}
 	{
 	TBuf8<120> l;
 	l.Format(_L8("agenda: done: %d added, %d changed, %d removed, %d to send, %d refused, %d kept"),
