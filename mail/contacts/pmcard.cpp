@@ -19,6 +19,7 @@
 #include "pmcard.h"
 extern "C" {
 #include "calmerge.h"
+int vc_to_psion(const char *in, int len, char *out, int max);     // card.h
 }
 
 _LIT8(KMapMagic, "#PSICON1");
@@ -682,4 +683,66 @@ void PmCardSync::Forget(RFs& aFs, const TDesC& aDir)
 	p = aDir;
 	p.Append(_L("push.txt"));
 	aFs.Delete(p);
+	}
+
+// ---------------------------------------------------------------- a .vcf file
+
+static TInt FindF(const TDesC8& aIn, TInt aFrom, const TDesC8& aWhat)
+	{
+	TInt at = aIn.Mid(aFrom).FindF(aWhat);
+	return at < 0 ? -1 : aFrom + at;
+	}
+
+static void ImportFileL(RFs& aFs, const TDesC& aVcf, const TDesC& aTemp, TInt& aCount, TInt& aSkipped)
+	{
+	RFile f;
+	User::LeaveIfError(f.Open(aFs, aVcf, EFileRead | EFileShareReadersOnly));
+	CleanupClosePushL(f);
+	TInt size = 0;
+	User::LeaveIfError(f.Size(size));
+	if (size > 1024 * 1024)
+		User::Leave(KErrTooBig);
+	HBufC8* in = HBufC8::NewLC(size);
+	TPtr8 ip = in->Des();
+	User::LeaveIfError(f.Read(ip));
+	const TInt KOut = 16384;
+	HBufC8* out = HBufC8::NewLC(KOut);
+	CContactDatabase* db = CContactDatabase::OpenL();
+	CleanupStack::PushL(db);
+	TInt at = 0;
+	for (;;)
+		{
+		TInt b = FindF(ip, at, _L8("BEGIN:VCARD"));
+		if (b < 0) break;
+		TInt e = FindF(ip, b, _L8("END:VCARD"));
+		if (e < 0) { aSkipped++; break; }
+		e += 9;
+		at = e;
+		TInt n = vc_to_psion((const char*)ip.Ptr() + b, e - b, (char*)out->Des().Ptr(), KOut);
+		if (n <= 0) { aSkipped++; continue; }
+		out->Des().SetLength(n);
+		RFile t;
+		User::LeaveIfError(t.Replace(aFs, aTemp, EFileWrite));
+		TInt werr = t.Write(*out);
+		t.Close();
+		User::LeaveIfError(werr);
+		RFileReadStream r;
+		User::LeaveIfError(r.Open(aFs, aTemp, EFileRead));
+		CleanupClosePushL(r);
+		TBool ok = EFalse;
+		CArrayPtr<CContactItem>* items = db->ImportContactsL(TUid::Uid(KVersitEntityUidVCard), r, ok,
+			CContactDatabase::EImportSingleContact);
+		if (items && items->Count()) aCount++; else aSkipped++;
+		if (items) { items->ResetAndDestroy(); delete items; }
+		CleanupStack::PopAndDestroy();   // r
+		}
+	aFs.Delete(aTemp);
+	CleanupStack::PopAndDestroy(4);      // db, out, in, f
+	}
+
+TInt PmCardSync::ImportFile(RFs& aFs, const TDesC& aVcf, const TDesC& aTemp, TInt& aCount, TInt& aSkipped)
+	{
+	aCount = aSkipped = 0;
+	TRAPD(err, ImportFileL(aFs, aVcf, aTemp, aCount, aSkipped));
+	return err;
 	}

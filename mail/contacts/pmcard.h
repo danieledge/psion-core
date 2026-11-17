@@ -31,6 +31,12 @@ public:
 		TDes& aSummary, TBool& aPushed);
 	// forgets the links between contacts and the server's cards
 	static void Forget(RFs& aFs, const TDesC& aDir);
+	// a .vcf file (one card or many; 2.1, 3.0 or 4.0, UTF-8 or not) into
+	// Contacts: each card as the Psion's 2.1 (vc_to_psion: what Contacts
+	// holds), read by Contacts' own vCard reader, as a new contact.
+	// aTemp: a scratch file's name. aCount: the contacts made; aSkipped:
+	// the cards that could not be read.
+	static TInt ImportFile(RFs& aFs, const TDesC& aVcf, const TDesC& aTemp, TInt& aCount, TInt& aSkipped);
 	};
 
 #endif
