@@ -170,7 +170,12 @@ static int modem_data(unsigned char *b, int n)
 	if (i < 0)
 		return n;
 	g_dead = 1;
-	while (i > 0 && (b[i - 1] == '\r' || b[i - 1] == '\n'))
+	/* only the modem's own line end before it ("\r\nNO CARRIER\r\n"): the
+	   data's own last line end stays (a CalDAV body ending in CR LF was two
+	   bytes short of its Content-Length, and the read waited for them) */
+	if (i >= 2 && b[i - 2] == '\r' && b[i - 1] == '\n')
+		i -= 2;
+	else if (i >= 1 && (b[i - 1] == '\r' || b[i - 1] == '\n'))
 		i--;
 	return i;
 }

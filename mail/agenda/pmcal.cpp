@@ -1208,7 +1208,7 @@ TBool CPmCalSync::MappedStepL()
 			else if (action == CM_KEEP_BOTH)
 				iKept++;
 			TPtrC8 key(*m.iKey);
-			TPtrC8 href = key.Left(key.Length() - 2);
+			TPtrC8 href = key.Length() >= 2 ? key.Left(key.Length() - 2) : key;
 			for (TInt k = 0; k < iEvents->Count(); k++)
 				if (Field(*(*iEvents)[k].iLine, 1) == href) (*iEvents)[k].iMapped = -1;
 			RemoveMap(iPos);           // (iMapped is only "linked or not": the indexes may move)
@@ -1363,7 +1363,10 @@ TBool CPmCalSync::LocalStepL()
 	if (!it)
 		{
 		if (iDefaultCal.Length() == 0)
+			{
+			iObserver.CalLog(_L8("agenda: no calendar for new entries (calendars.txt has none marked D)"));
 			return EFalse;                       // nowhere to put them
+			}
 		iObserver.CalProgress(_L("Looking for new Agenda entries..."));
 		it = CAgnSyncIter::NewL(iServ);
 		iIter = it;
@@ -1376,6 +1379,14 @@ TBool CPmCalSync::LocalStepL()
 		if (type != CAgnEntry::EAppt && type != CAgnEntry::EEvent) continue;
 		TUint32 auid = it->UniqueId().Id();
 		TTime changed = it->LastChangedDate();
+		{
+		TBuf8<80> l;
+		l.Format(_L8("agenda: entry %u type %d changed "), auid, (TInt)type);
+		AppendHex64(l, changed.Int64());
+		l.Append(_L8(" since "));
+		AppendHex64(l, iSince);
+		iObserver.CalLog(l);
+		}
 		if (changed.Int64() <= iSince) continue;
 		TBool known = EFalse;
 		for (TInt i = 0; i < iMap->Count() && !known; i++)
@@ -1413,6 +1424,12 @@ TBool CPmCalSync::LocalStepL()
 
 void CPmCalSync::FinishL()
 	{
+	{
+	TBuf8<120> l;
+	l.Format(_L8("agenda: done: %d added, %d changed, %d removed, %d to send, %d refused, %d kept"),
+		iAdded, iChangedN, iRemoved, iSent, iFailed, iKept);
+	iObserver.CalLog(l);
+	}
 	SaveMapL();
 	SavePushL();
 	if (iPushedRead)

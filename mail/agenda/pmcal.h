@@ -58,6 +58,8 @@ public:
 	virtual void CalProgress(const TDesC& aText) = 0;
 	// done: aPushed = there are changes for the engine to send
 	virtual void CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed) = 0;
+	// what was decided, for a log (PsiSync's; PsiMail keeps none)
+	virtual void CalLog(const TDesC8& /*aLine*/) {}
 	};
 
 struct TPmCalMap

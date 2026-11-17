@@ -125,12 +125,18 @@ int http_request(const char *method, const char *path, const char *headers,
 				if (strncmp(line, "HTTP/1.", 7)) { snprintf(why, whymax, "Not a web server: %.40s", line); return CAL_RES_FAILED; }
 				r->status = atoi(line + 9);
 				got_status = 1;
+				/* an HTTP/1.0 server closes after each response unless it says
+				   keep-alive (Radicale's own server does): reusing the line
+				   would send the next request into a closed connection - on a
+				   modem, into its command mode */
+				if (line[7] == '0') close_after = 1;
 				continue;
 			}
 			if (n == 0) break;
 			if (!pm_strncasecmp(line, "Content-Length:", 15)) clen = atol(line + 15);
 			else if (!pm_strncasecmp(line, "Transfer-Encoding:", 18) && pm_stristr(line, "chunked")) chunked = 1;
 			else if (!pm_strncasecmp(line, "Connection:", 11) && pm_stristr(line, "close")) close_after = 1;
+			else if (!pm_strncasecmp(line, "Connection:", 11) && pm_stristr(line, "keep-alive")) close_after = 0;
 			else if (!pm_strncasecmp(line, "ETag:", 5)) {
 				const char *v = line + 5;
 				while (*v == ' ') v++;
