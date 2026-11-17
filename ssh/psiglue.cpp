@@ -3005,7 +3005,18 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	while (*p && len < 20) cmd[len++] = *p++;
 	cmd[len++] = ' ';
 	p = gShared->host;
-	while (*p && len < 190) cmd[len++] = *p++;
+	while (*p && len < 190)
+		{
+		// (a CR or space in the name would end the dial command and the
+		// rest run as a command of its own)
+		unsigned char c = (unsigned char)*p++;
+		if (c <= ' ' || c > '~')
+			{
+			SetMsg(aResult, aResultMax, "the server's name has characters a modem cannot dial");
+			return -1;
+			}
+		cmd[len++] = (char)c;
+		}
 	cmd[len++] = ':';
 	// port number
 	char num[8];

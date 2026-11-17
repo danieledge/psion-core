@@ -460,6 +460,12 @@ int tls_connect(const char *host, char *why, int whymax)
 	int ret = -1;
 	static const unsigned char basepoint[32] = { 9 };
 
+	/* a DNS name is at most 253 bytes: a longer one ran past ch[] */
+	if (hn < 1 || hn > 253) {
+		if (why && whymax > 0) { strncpy(why, "the server's name is too long", whymax - 1); why[whymax - 1] = 0; }
+		return -1;
+	}
+
 	tls_close();                         /* nothing of the last connection survives */
 	g_err = "handshake failed";
 	g_encrypted = 0;
