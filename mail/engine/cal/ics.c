@@ -404,7 +404,7 @@ typedef struct
 	long wall_t;
 	} Block;
 #define MAX_LINES 1500
-#define MAX_BLOCKS 60
+#define MAX_BLOCKS 250              /* (a series and its exceptions: more is refused, see load) */
 
 typedef struct
 	{
@@ -437,7 +437,11 @@ static int load(Obj *ob, const char *buf, int len, int zone)
 		memcpy(ob->text + used, line, n + 1);
 		used += n + 1;
 		v = split_prop(line, name, sizeof(name), params, sizeof(params));
-		if (!strcmp(name, "BEGIN") && (!pm_strcasecmp(v, "VEVENT") || !pm_strcasecmp(v, "VTODO")) && ob->nblocks < MAX_BLOCKS) {
+		if (!strcmp(name, "BEGIN") && (!pm_strcasecmp(v, "VEVENT") || !pm_strcasecmp(v, "VTODO"))) {
+			/* every VEVENT must be in the table: one past it was copied as
+			   it was, and a change to its instance added a second VEVENT
+			   with the same RECURRENCE-ID */
+			if (ob->nblocks >= MAX_BLOCKS) { free(ob->text); free(line); return -1; }
 			cur = ob->nblocks++;
 			memset(&ob->block[cur], 0, sizeof(Block));
 			ob->block[cur].start = ob->nlines;
@@ -644,10 +648,16 @@ int ics_partstat(char *buf, int len, int max, const char *recurid, const char *e
 		if (i > ob->block[target].start && i < ob->block[target].end && is_prop(s, "ATTENDEE") && at &&
 		    (at[n] == 0 || at[n] == '"' || at[n] == ';')) {
 			/* the line again: PARTSTAT and RSVP out, ours in */
-			char l[600], name[40], params[300], np[300];
+			static char l[LINE_MAX_ICS + 40], name[40], params[LINE_MAX_ICS], np[LINE_MAX_ICS];
 			const char *v = split_prop(s, name, sizeof(name), params, sizeof(params));
 			const char *p = params;
 			int k = 0;
+			/* (cut parameters, perhaps inside a quoted value, would go back
+			   to the server as a broken line: refused instead) */
+			if ((int)strlen(params) >= (int)sizeof(params) - 1 || (int)strlen(s) + 30 >= (int)sizeof(l)) {
+				free(o.b); free(ob->text); free(ob);
+				return -1;
+			}
 			np[0] = 0;
 			while (*p) {
 				const char *e2 = p;

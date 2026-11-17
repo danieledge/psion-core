@@ -153,10 +153,12 @@ int http_request(const char *method, const char *path, const char *headers,
 		if (chunked) {
 			for (;;) {
 				long size;
+				char *e;
 				int n = pmn_readline(line, sizeof(line), 60000);
 				if (n < 0) return lost(n, why, whymax);
 				if (n == 0) continue;
-				size = strtol(line, 0, 16);
+				size = strtol(line, &e, 16);
+				if (e == line) return lost(-1, why, whymax);   /* (not a chunk's size: a damaged answer, not its end) */
 				if (size <= 0) {
 					while ((n = pmn_readline(line, sizeof(line), 60000)) > 0) {}   /* trailers */
 					break;
