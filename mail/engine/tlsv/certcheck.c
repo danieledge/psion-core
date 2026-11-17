@@ -130,6 +130,7 @@ static long der_time(int tag, const unsigned char *v, int l)
 #undef D2
 	if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return -1;
 	if (y < 1970) return 0;
+	if (y > 2037) return 0x7fffffffL;    /* (past 32-bit time, which days * 86400 overflowed: the far future) */
 	days = (y - 1970) * 365L + (y - 1969) / 4 + cum[mo - 1] + (d - 1);
 	if (mo > 2 && y % 4 == 0) days++;
 	return days * 86400L + h * 3600L + mi * 60L + s;

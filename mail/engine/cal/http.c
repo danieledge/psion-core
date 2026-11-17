@@ -122,7 +122,7 @@ int http_request(const char *method, const char *path, const char *headers,
 			}
 			if (!got_status) {
 				if (n == 0) continue;
-				if (strncmp(line, "HTTP/1.", 7)) { snprintf(why, whymax, "Not a web server: %.40s", line); return CAL_RES_FAILED; }
+				if (n < 12 || strncmp(line, "HTTP/1.", 7)) { snprintf(why, whymax, "Not a web server: %.40s", line); return CAL_RES_FAILED; }
 				r->status = atoi(line + 9);
 				got_status = 1;
 				/* an HTTP/1.0 server closes after each response unless it says
@@ -166,7 +166,12 @@ int http_request(const char *method, const char *path, const char *headers,
 		} else if (clen >= 0) {
 			if ((k = body_bytes(clen, r, sink, ctx)) != 0) return lost(k, why, whymax);
 		} else {
-			body_bytes(-1, r, sink, ctx);
+			/* (to the close: a timeout part-way is a failure, not a whole
+			   answer - a cut calendar list lost the calendars missing from
+			   it. A close without TLS's close_notify reads as -1 and is the
+			   end, as many servers end so) */
+			k = body_bytes(-1, r, sink, ctx);
+			if (k == PMN_TIMEOUT || k == PMN_CANCEL) return lost(k, why, whymax);
 			close_after = 1;
 		}
 		if (close_after) { pmn_close(0); g_conn = -1; }
