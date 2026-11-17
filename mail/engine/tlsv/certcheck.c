@@ -13,9 +13,11 @@
  *     the user can choose to trust that server's key: its SHA-256 is kept
  *     in pins.txt and must match from then on.
  *
- * RSA only (keys up to 4096 bits): the Psion can afford RSA verification
- * (public exponent 65537) in well under a second, not ECDSA. Servers with
- * both kinds of certificate pick RSA because that is all PsiMail offers.
+ * RSA (keys up to 4096 bits, public exponent 65537) and, from November
+ * 2026, ECDSA on P-256 and P-384 (ecverify.h): Let's Encrypt's E and Y
+ * certificates, Google's and Cloudflare's, GlobalSign's and DigiCert's
+ * ECDSA ones. RSA is offered first, being the cheaper on the Psion; a
+ * server with only an ECDSA certificate uses that.
  *
  * PsiWeb (0.84 on) builds this too, with TLSV_APP_NAME "PsiWeb" and no
  * trusted keys (its st_pin_check always says no: engine/pwcert.c there).
@@ -25,6 +27,7 @@
 #include "includes.h"
 #include "calport.h"   /* core/mail/engine/cal: calp_dir, pm_progress, st_pin_check ... */
 #include "roots.h"
+#include "ecverify.h"
 
 /* the program named in the reasons (PsiWeb builds with its own name) */
 #ifndef TLSV_APP_NAME
@@ -45,6 +48,9 @@ typedef struct
 	const unsigned char *spki; int spkilen;      /* SubjectPublicKeyInfo TLV */
 	const unsigned char *n; int nlen;            /* RSA modulus */
 	const unsigned char *e; int elen;
+	int curve;                                   /* an ECDSA key: 256 / 384, 0 = none */
+	const unsigned char *ecpt;                   /* its point, X || Y (2 x 32 or 48 bytes) */
+	int sigec;                                   /* signed with ECDSA (else RSA PKCS #1) */
 	long not_before, not_after;
 	int is_ca;                                   /* basicConstraints cA */
 	const unsigned char *san; int sanlen;        /* subjectAltName GeneralNames */
@@ -110,6 +116,12 @@ static const unsigned char OID_RSA[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x0
 static const unsigned char OID_SHA256RSA[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b };
 static const unsigned char OID_SHA384RSA[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0c };
 static const unsigned char OID_SHA512RSA[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d };
+static const unsigned char OID_EC[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01 };
+static const unsigned char OID_P256[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 };
+static const unsigned char OID_P384[] = { 0x2b, 0x81, 0x04, 0x00, 0x22 };
+static const unsigned char OID_SHA256EC[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02 };
+static const unsigned char OID_SHA384EC[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03 };
+static const unsigned char OID_SHA512EC[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04 };
 static const unsigned char OID_SAN[] = { 0x55, 0x1d, 0x11 };
 static const unsigned char OID_BC[] = { 0x55, 0x1d, 0x13 };
 
@@ -163,6 +175,9 @@ static int parse_cert(Cert *c, const unsigned char *der, int len)
 	if (oid_is(v, wl, OID_SHA256RSA, 9)) c->sighash = 256;
 	else if (oid_is(v, wl, OID_SHA384RSA, 9)) c->sighash = 384;
 	else if (oid_is(v, wl, OID_SHA512RSA, 9)) c->sighash = 512;
+	else if (oid_is(v, wl, OID_SHA256EC, 8)) { c->sighash = 256; c->sigec = 1; }
+	else if (oid_is(v, wl, OID_SHA384EC, 8)) { c->sighash = 384; c->sigec = 1; }
+	else if (oid_is(v, wl, OID_SHA512EC, 8)) { c->sighash = 512; c->sigec = 1; }
 	/* signatureValue BIT STRING */
 	if (tlv(&p, end, &v, &l) != 0x03 || l < 2) return -1;
 	c->sig = v + 1; c->siglen = l - 1;
@@ -206,6 +221,20 @@ static int parse_cert(Cert *c, const unsigned char *der, int len)
 						while (nl > 0 && *nv == 0) { nv++; nl--; }
 						c->n = nv; c->nlen = nl; c->e = ev; c->elen = el;
 					}
+				}
+			}
+			/* SEQ { SEQ { OID ecPublicKey, OID curve }, BIT STRING { 0, 4, X, Y } } */
+			ao = a;
+			if (tlv(&ao, a + al, &oid, &ol) == 0x06 && oid_is(oid, ol, OID_EC, 7)) {
+				const unsigned char *cv; int cl, bits = 0;
+				if (tlv(&ao, a + al, &cv, &cl) == 0x06) {
+					if (oid_is(cv, cl, OID_P256, 8)) bits = 256;
+					else if (oid_is(cv, cl, OID_P384, 5)) bits = 384;
+				}
+				/* uncompressed points only (what certificates carry) */
+				if (bits && tlv(&s, se, &b, &bl) == 0x03 && bl == 2 + bits / 4 && b[0] == 0 && b[1] == 4) {
+					c->curve = bits;
+					c->ecpt = b + 2;
 				}
 			}
 		}
@@ -279,6 +308,22 @@ static int verify_pkcs1(const unsigned char *n, int nlen, const unsigned char *e
 	memcpy(want + 3 + pad, di, dil);
 	memcpy(want + 3 + pad + dil, hash, hl);
 	return memcmp(em, want, nlen) ? -1 : 0;
+}
+
+/* a certificate's signature, by a key that is RSA (n, e) or ECDSA (curve,
+   pt): 0 if it holds */
+static int verify_cert(const unsigned char *n, int nlen, const unsigned char *e, int elen,
+                       int curve, const unsigned char *pt, const Cert *c)
+{
+	unsigned char hash[64];
+	if (!c->sighash) return -1;
+	if (c->sigec) {
+		if (!curve || !pt) return -1;
+		hash_n(c->sighash, c->tbs, c->tbslen, hash);
+		return tlsv_ecdsa_verify(curve, pt, curve / 4, hash, c->sighash / 8, c->sig, c->siglen);
+	}
+	if (!n) return -1;
+	return verify_pkcs1(n, nlen, e, elen, c->sighash, c->tbs, c->tbslen, c->sig, c->siglen);
 }
 
 /* RSASSA-PSS with SHA-256, MGF1-SHA-256, salt of 32 bytes (RFC 8446 4.2.3) */
@@ -446,16 +491,16 @@ static int chain_ok(long now)
 			const Root *r = &k_roots[i];
 			if (!name_eq(c->issuer, c->issuerlen, r->subject, r->subjectlen)) continue;
 			pm_progress("Checking %s's certificate...", g_host);
-			if (verify_pkcs1(r->n, r->nlen, r->e, r->elen, c->sighash, c->tbs, c->tbslen, c->sig, c->siglen) == 0)
+			if (verify_cert(r->n, r->nlen, r->e, r->elen, r->curve, r->pt, c) == 0)
 				goto trusted;
 		}
 		/* or by the next certificate the server sent */
 		for (j = 0; j < g_ncert; j++) {
 			Cert *iss = &g_cert[j];
 			if (j == cur || !name_eq(c->issuer, c->issuerlen, iss->subject, iss->subjectlen)) continue;
-			if (!iss->n || !iss->is_ca) continue;
+			if ((!iss->n && !iss->curve) || !iss->is_ca) continue;
 			pm_progress("Checking %s's certificate...", g_host);
-			if (verify_pkcs1(iss->n, iss->nlen, iss->e, iss->elen, c->sighash, c->tbs, c->tbslen, c->sig, c->siglen) != 0)
+			if (verify_cert(iss->n, iss->nlen, iss->e, iss->elen, iss->curve, iss->ecpt, c) != 0)
 				continue;
 			break;
 		}
@@ -503,7 +548,7 @@ const char *tlsv_certificate(const unsigned char *msg, int len)
 		p += 2 + el;
 	}
 	if (!g_ncert) return "the server sent no certificate";
-	if (!g_cert[0].n) return "the server's key is not RSA (" TLSV_APP_NAME " can only check RSA)";
+	if (!g_cert[0].n && !g_cert[0].curve) return "the server's key is of a kind " TLSV_APP_NAME " can't check";
 	fingerprint(&g_cert[0]);
 
 	now = pm_time();
@@ -531,13 +576,22 @@ const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char t
 	alg = (msg[0] << 8) | msg[1];
 	sl = (msg[2] << 8) | msg[3];
 	if (4 + sl > len) return "bad CertificateVerify";
-	if (alg != 0x0804) return "the server used a signature " TLSV_APP_NAME " can't check";
+	/* RSA-PSS, or ECDSA with the hash TLS 1.3 ties to each curve */
+	if (alg != 0x0804 && !(alg == 0x0403 && g_cert[0].curve == 256) && !(alg == 0x0503 && g_cert[0].curve == 384))
+		return "the server used a signature " TLSV_APP_NAME " can't check";
 	memset(content, 0x20, 64);
 	memcpy(content + 64, "TLS 1.3, server CertificateVerify", 33);
 	content[97] = 0;
 	memcpy(content + 98, th, 32);
 	pm_progress("Checking %s's signature...", g_host);
-	if (verify_pss(&g_cert[0], content, 130, msg + 4, sl) != 0) {
+	if (alg != 0x0804) {
+		unsigned char h[48];
+		hash_n(alg == 0x0503 ? 384 : 256, content, 130, h);
+		if (tlsv_ecdsa_verify(g_cert[0].curve, g_cert[0].ecpt, g_cert[0].curve / 4, h, alg == 0x0503 ? 48 : 32, msg + 4, sl) != 0) {
+			snprintf(g_problem, sizeof(g_problem), "its signature did not match its certificate");
+			return "the server's signature is wrong";
+		}
+	} else if (verify_pss(&g_cert[0], content, 130, msg + 4, sl) != 0) {
 		snprintf(g_problem, sizeof(g_problem), "its signature did not match its certificate");
 		return "the server's signature is wrong";
 	}

@@ -527,8 +527,10 @@ int tls_connect(const char *host, char *why, int whymax)
 		   tlsv_* hooks): RSA-PSS for CertificateVerify, nothing else to check */
 		static const unsigned short sa[] = { 0x0804 };
 #elif defined(TLS_VERIFY)
-		/* RSA-PSS for CertificateVerify; PKCS#1 v1.5 for certificates */
-		static const unsigned short sa[] = { 0x0804, 0x0401, 0x0501, 0x0601 };
+		/* RSA-PSS for CertificateVerify; PKCS#1 v1.5 for certificates; then
+		   ECDSA on P-256 and P-384 (certcheck.c's ecverify.h), after RSA as
+		   the dearer on the Psion: a server with both certificates picks RSA */
+		static const unsigned short sa[] = { 0x0804, 0x0401, 0x0501, 0x0601, 0x0403, 0x0503 };
 #else
 		static const unsigned short sa[] = { 0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601, 0x0807 };
 #endif
