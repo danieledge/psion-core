@@ -286,6 +286,9 @@ int pmimg_decode_png(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 		if (len > 0x7fffffffUL) { if (!seen_idat) { r = PMIMG_E_FORMAT; pmimg_err(err, errmax, "a damaged PNG"); } break; }
 		if (!memcmp(type, "IHDR", 4)) {
 			unsigned char h[13];
+			/* one IHDR only: a second replaced the buffers and sizes that
+			   inflate and the sink were set up with (a heap overrun) */
+			if (seen_ihdr) { if (!seen_idat) { r = PMIMG_E_FORMAT; pmimg_err(err, errmax, "a damaged PNG"); } break; }
 			if (len != 13 || pmimg_in_read(in, h, 13) != 13) { r = PMIMG_E_FORMAT; pmimg_err(err, errmax, "a damaged PNG"); break; }
 			p->w = (int)(((unsigned long)h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3]);
 			p->h = (int)(((unsigned long)h[4] << 24) | (h[5] << 16) | (h[6] << 8) | h[7]);
