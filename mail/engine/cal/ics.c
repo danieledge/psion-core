@@ -423,7 +423,7 @@ static int load(Obj *ob, const char *buf, int len, int zone)
 		memcpy(ob->text + used, line, n + 1);
 		used += n + 1;
 		v = split_prop(line, name, sizeof(name), params, sizeof(params));
-		if (!strcmp(name, "BEGIN") && !pm_strcasecmp(v, "VEVENT") && ob->nblocks < MAX_BLOCKS) {
+		if (!strcmp(name, "BEGIN") && (!pm_strcasecmp(v, "VEVENT") || !pm_strcasecmp(v, "VTODO")) && ob->nblocks < MAX_BLOCKS) {
 			cur = ob->nblocks++;
 			memset(&ob->block[cur], 0, sizeof(Block));
 			ob->block[cur].start = ob->nlines;
@@ -685,6 +685,124 @@ int ics_exclude(char *buf, int len, int max, const char *recurid, int zone)
 	free(ob->text);
 	free(ob);
 	if (o.bad) { free(o.b); return -1; }
+	memcpy(buf, o.b, o.n);
+	buf[o.n] = 0;
+	free(o.b);
+	return o.n;
+}
+
+/* ------------------------------------------------------------ to-dos (PsiSync) */
+
+int ics_each_todo(const char *text, int len, void (*fn)(const IcsTodo *t, void *ctx), void *ctx)
+{
+	static char line[LINE_MAX_ICS];
+	char name[40], params[200];
+	IcsTodo t;
+	int pos = 0, in_todo = 0, other = 0, count = 0;
+	while (next_line(text, len, &pos, line, sizeof(line)) >= 0) {
+		const char *v = split_prop(line, name, sizeof(name), params, sizeof(params));
+		if (!strcmp(name, "BEGIN")) {
+			if (!pm_strcasecmp(v, "VTODO") && !in_todo) { memset(&t, 0, sizeof(t)); in_todo = 1; other = 0; }
+			else if (in_todo) other++;
+			continue;
+		}
+		if (!strcmp(name, "END")) {
+			if (in_todo && other) other--;
+			else if (in_todo && !pm_strcasecmp(v, "VTODO")) { in_todo = 0; count++; if (fn) fn(&t, ctx); }
+			continue;
+		}
+		if (!in_todo || other) continue;
+		if (!strcmp(name, "UID")) pm_copy(t.uid, v, sizeof(t.uid));
+		else if (!strcmp(name, "SUMMARY")) text_value(v, t.summary, sizeof(t.summary));
+		else if (!strcmp(name, "PRIORITY")) { t.priority = atoi(v); if (t.priority < 0 || t.priority > 9) t.priority = 0; }
+		else if (!strcmp(name, "STATUS")) {
+			if (!pm_strcasecmp(v, "COMPLETED")) t.done = 1;
+			if (!pm_strcasecmp(v, "CANCELLED")) t.cancelled = 1;
+		}
+		else if (!strcmp(name, "COMPLETED")) t.done = 1;
+		else if (!strcmp(name, "DUE")) {
+			long when;
+			int utc, date_only;
+			if (cal_parse_time(v, &when, &utc, &date_only) == 0) {
+				t.due = when; t.has_due = 1; t.due_date_only = date_only; t.due_utc = utc;
+			}
+		}
+	}
+	return count;
+}
+
+static void out_todo_fields(Out *o, const IcsChange *c)
+{
+	char l[80], d[24];
+	out_text(o, "SUMMARY", c->summary);
+	if (c->start) {
+		cal_fmt_date(c->start - c->start % 86400, d);   /* the Agenda's due is a date */
+		snprintf(l, sizeof(l), "DUE;VALUE=DATE:%s", d);
+		out_str(o, l);
+	}
+	if (c->priority > 0 && c->priority <= 9) { snprintf(l, sizeof(l), "PRIORITY:%d", c->priority); out_str(o, l); }
+	if (c->done) {
+		out_str(o, "STATUS:COMPLETED");
+		out_str(o, "PERCENT-COMPLETE:100");
+		out_stamp(o, "COMPLETED");
+	} else out_str(o, "STATUS:NEEDS-ACTION");
+}
+
+int ics_todo_new(const IcsChange *c, int zone, const char *uid, char *buf, int max)
+{
+	Out o;
+	char l[200];
+	(void)zone;
+	o.b = buf; o.n = 0; o.max = max; o.bad = 0;
+	out_str(&o, "BEGIN:VCALENDAR");
+	out_str(&o, "VERSION:2.0");
+	out_str(&o, "PRODID:-//PsiSync//Psion//EN");
+	out_str(&o, "BEGIN:VTODO");
+	snprintf(l, sizeof(l), "UID:%s", uid);
+	out_str(&o, l);
+	out_stamp(&o, "DTSTAMP");
+	out_stamp(&o, "CREATED");
+	out_todo_fields(&o, c);
+	out_str(&o, "END:VTODO");
+	out_str(&o, "END:VCALENDAR");
+	if (o.bad) return -1;
+	buf[o.n] = 0;
+	return o.n;
+}
+
+int ics_todo_change(char *buf, int len, int max, const IcsChange *c, int zone)
+{
+	Obj *ob = (Obj *)malloc(sizeof(Obj));
+	Out o;
+	int i, in_todo = 0, done = 0, depth = 0;
+	if (!ob) return -1;
+	if (load(ob, buf, len, zone) != 0) { free(ob); return -1; }
+	o.b = (char *)malloc(max + 1); o.n = 0; o.max = max; o.bad = 0;
+	if (!o.b) { free(ob->text); free(ob); return -1; }
+	for (i = 0; i < ob->nlines; i++) {
+		const char *s = L(ob, i);
+		if (!in_todo && !done && is_prop(s, "BEGIN") && pm_stristr(s, "VTODO")) { in_todo = 1; depth = 0; out_str(&o, s); continue; }
+		if (in_todo) {
+			if (is_prop(s, "BEGIN")) depth++;
+			if (is_prop(s, "END") && depth > 0) { depth--; out_str(&o, s); continue; }
+			if (depth > 0) { out_str(&o, s); continue; }
+			if (is_prop(s, "END")) {
+				out_todo_fields(&o, c);
+				out_stamp(&o, "DTSTAMP");
+				out_stamp(&o, "LAST-MODIFIED");
+				out_str(&o, s);
+				in_todo = 0; done = 1;
+				continue;
+			}
+			if (is_prop(s, "SUMMARY") || is_prop(s, "DUE") || is_prop(s, "PRIORITY") || is_prop(s, "STATUS") ||
+			    is_prop(s, "COMPLETED") || is_prop(s, "PERCENT-COMPLETE") || is_prop(s, "DTSTAMP") || is_prop(s, "LAST-MODIFIED"))
+				continue;
+		}
+		out_str(&o, s);
+	}
+	free(ob->text);
+	free(ob);
+	if (o.bad || !done) { free(o.b); return -1; }
 	memcpy(buf, o.b, o.n);
 	buf[o.n] = 0;
 	free(o.b);

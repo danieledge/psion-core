@@ -18,6 +18,7 @@
 #include <agclient.h>
 #include <agmsiter.h>
 #include <agmentry.h>
+#include <agmtodos.h>
 #include <agmrptd.h>
 #include <agmexcpt.h>
 #include <agmdate.h>
@@ -269,6 +270,8 @@ void CPmCalSync::Reset()
 		}
 	delete iWritable;
 	iWritable = NULL;
+	delete iCalNames;
+	iCalNames = NULL;
 	}
 
 void CPmCalSync::Close()
@@ -692,6 +695,7 @@ static void WriteFileSafeL(RFs& aFs, const TDesC& aPath, const TDesC8& aText)
 void CPmCalSync::LoadCalendarsL()
 	{
 	iWritable = new(ELeave) CDesC8ArrayFlat(4);
+	iCalNames = new(ELeave) CDesC8ArrayFlat(4);
 	iDefaultCal.Zero();
 	HBufC8* text = ReadFileL(KCalsFile);
 	if (!text)
@@ -706,6 +710,10 @@ void CPmCalSync::LoadCalendarsL()
 		TPtrC8 flags = Field(line, 4);
 		if (flags.Locate('W') >= 0) iWritable->AppendL(Field(line, 0));
 		if (flags.Locate('D') >= 0) iDefaultCal = Clip(Field(line, 0), 12);
+		TBuf8<80> cn(Clip(Field(line, 0), 12));
+		cn.Append('\t');
+		cn.Append(Clip(Field(line, 5), 60));
+		iCalNames->AppendL(cn);
 		}
 	CleanupStack::PopAndDestroy();
 	}
@@ -912,6 +920,12 @@ TInt64 CPmCalSync::Changed(TUint32 aAuid)
 	TTime s, en;
 	if (e->Type() == CAgnEntry::EAppt) { s = e->CastToAppt()->StartDateTime(); en = e->CastToAppt()->EndDateTime(); }
 	else if (e->Type() == CAgnEntry::EEvent || e->Type() == CAgnEntry::EAnniv) { s = e->CastToEvent()->StartDate(); en = e->CastToEvent()->EndDate(); }
+	else if (e->Type() == CAgnEntry::ETodo)
+		{
+		CAgnTodo* t = e->CastToTodo();
+		s = t->IsDated() ? t->DueDate() : TTime(TInt64(0));
+		en = TTime(TInt64((TInt)t->Priority(), t->IsCrossedOut() ? 1 : 0));
+		}
 	else { s = e->InstanceStartDate(); en = s; }
 	AppendHex64(d, s.Int64());
 	AppendHex64(d, en.Int64());
@@ -943,7 +957,13 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 	line.Append(_L8("\ta"));
 	line.AppendNum((TUint)aAuid, EDecimal);
 	line.Append('\t');
-	if (aOp == 'N')
+	if (aOp == 'N' && aEntry && aEntry->Type() == CAgnEntry::ETodo)
+		{
+		TBuf8<12> cal;
+		CalForList(aEntry->CastToTodo()->TodoListId(), cal);
+		line.Append(cal);
+		}
+	else if (aOp == 'N')
 		line.Append(iDefaultCal);
 	else
 		{
@@ -954,7 +974,35 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 		if (!iPushSeries)
 			line.Append(Field(aEventLine, 3));      // recurid (a series: none, the whole event)
 		}
-	if (aOp != 'D')
+	if (aOp != 'D' && aEntry->Type() == CAgnEntry::ETodo)
+		{
+		// (KPmCalOptTodos) a to-do: due, T and C (done), priority in the alarm's place
+		CAgnTodo* t = aEntry->CastToTodo();
+		line.Append('\t');
+		if (t->IsDated()) AppendTime(line, t->DueDate());
+		line.Append('\t');
+		if (t->IsDated()) AppendTime(line, t->DueDate());
+		line.Append(_L8("\tT"));
+		if (t->IsCrossedOut()) line.Append('C');
+		line.Append('\t');
+		line.AppendNum((TInt)t->Priority());
+		line.Append('\t');
+		TBuf<200> text;
+		CRichText* rt = aEntry->RichTextL();
+		rt->Extract(text, 0, Min(rt->DocumentLength(), text.MaxLength()));
+		text.Trim();
+		if (text.Length() == 0) text = _L("(no title)");
+		AppendClean(line, Clip(text, 190));
+		line.Append('\t');
+		if (aOp == 'N')
+			{
+			line.Append(_L8("\tpsion-"));
+			AppendHex64(line, iSince);
+			line.Append('-');
+			line.AppendNum((TUint)aAuid, EDecimal);
+			}
+		}
+	else if (aOp != 'D')
 		{
 		TTime start, end;
 		TBool allday = aEntry->Type() != CAgnEntry::EAppt;
@@ -1032,6 +1080,19 @@ void CPmCalSync::FillL(CAgnEntry* aEntry, const TDesC8& aLine, const TTime& aSta
 	TBuf<200> text;
 	text.Copy(Clip(Field(aLine, 8), 200));
 	rt->InsertL(0, text);
+	if (aEntry->Type() == CAgnEntry::ETodo)
+		{
+		// priority in the alarm's place; done: crossed out
+		CAgnTodo* t = aEntry->CastToTodo();
+		TLex8 lp(Field(aLine, 7));
+		TInt prio = 0;
+		lp.Val(prio);
+		if (prio >= 1 && prio <= 9) t->SetPriority(prio);
+		TBool done = Field(aLine, 4).Locate('C') >= 0;
+		if (done && !t->IsCrossedOut()) { TTime now; now.HomeTime(); t->CrossOut(now); }
+		else if (!done && t->IsCrossedOut()) t->UnCrossOut();
+		return;
+		}
 	TBuf<120> loc;
 	loc.Copy(Clip(Field(aLine, 9), 120));
 	aEntry->SetLocationL(loc);
@@ -1053,8 +1114,74 @@ void CPmCalSync::FillL(CAgnEntry* aEntry, const TDesC8& aLine, const TTime& aSta
 		}
 	}
 
+static TBool IsTodo(const TDesC8& aFlags) { return aFlags.Locate('T') >= 0; }
+
+// (KPmCalOptTodos) the Agenda to-do list for a calendar: the one with its
+// name, made if there is none
+TAgnTodoListId CPmCalSync::TodoListL(const TDesC8& aCalId)
+	{
+	TBuf<64> name(_L("To-do list"));
+	for (TInt i = 0; iCalNames && i < iCalNames->Count(); i++)
+		if (Field((*iCalNames)[i], 0) == aCalId) { name.Copy(Clip(Field((*iCalNames)[i], 1), 60)); break; }
+	CAgnTodoListNames* names = CAgnTodoListNames::NewL();
+	CleanupStack::PushL(names);
+	iModel->PopulateTodoListNamesL(names);
+	for (TInt k = 0; k < names->Count(); k++)
+		if (names->TodoListName(k).CompareF(name) == 0)
+			{
+			TAgnTodoListId id = names->TodoListId(k);
+			CleanupStack::PopAndDestroy();
+			return id;
+			}
+	CleanupStack::PopAndDestroy();
+	CAgnTodoList* list = CAgnTodoList::NewL();
+	CleanupStack::PushL(list);
+	list->SetName(name);
+	TAgnTodoListId id = iModel->AddTodoListL(list);
+	CleanupStack::Pop();                   // (the model has it)
+	return id;
+	}
+
+// the calendar a to-do list is named after, else where new entries go
+void CPmCalSync::CalForList(TAgnTodoListId aList, TDes8& aCalId)
+	{
+	aCalId = iDefaultCal;
+	CAgnTodoListNames* names = CAgnTodoListNames::NewL();
+	CleanupStack::PushL(names);
+	iModel->PopulateTodoListNamesL(names);
+	for (TInt k = 0; k < names->Count(); k++)
+		{
+		if (!(names->TodoListId(k) == aList)) continue;
+		TBuf8<64> n;
+		n.Copy(Clip(names->TodoListName(k), 60));
+		for (TInt i = 0; iCalNames && i < iCalNames->Count(); i++)
+			if (Field((*iCalNames)[i], 1).CompareF(n) == 0)
+				{
+				TPtrC8 id = Field((*iCalNames)[i], 0);
+				TInt pos;
+				if (iWritable->Find(id, pos) == 0) aCalId = Clip(id, 12);
+				}
+		break;
+		}
+	CleanupStack::PopAndDestroy();
+	}
+
 TUint32 CPmCalSync::AddFromEventL(const TDesC8& aLine)
 	{
+	if (IsTodo(Field(aLine, 4)))
+		{
+		// (KPmCalOptTodos) a to-do, in its calendar's list
+		CAgnTodo* t = CAgnTodo::NewL(iPara, iChar);
+		CleanupStack::PushL(t);
+		t->SetTodoListId(TodoListL(Field(aLine, 0)));
+		TTime due = ParseTime(Field(aLine, 5));
+		if (due != Time::NullTTime()) t->SetDueDate(due);
+		else t->MakeUndated();
+		FillL(t, aLine, due);
+		TAgnEntryId tid = iModel->AddEntryL(t);
+		CleanupStack::PopAndDestroy();
+		return iServ->GetUniqueId(tid).Id();
+		}
 	TTime start = ParseTime(Field(aLine, 5)), end = ParseTime(Field(aLine, 6));
 	TBool allday = Field(aLine, 4).Locate('A') >= 0;
 	CAgnEntry* e;
@@ -1086,6 +1213,22 @@ TUint32 CPmCalSync::UpdateFromEventL(TUint32 aAuid, const TDesC8& aLine)
 	if (!e)
 		return AddFromEventL(aLine);
 	CleanupStack::PushL(e);
+	if (IsTodo(Field(aLine, 4)) || e->Type() == CAgnEntry::ETodo)
+		{
+		if (!IsTodo(Field(aLine, 4)) || e->Type() != CAgnEntry::ETodo)
+			{
+			CleanupStack::PopAndDestroy();
+			iServ->DeleteEntry(TAgnUniqueId(aAuid));
+			return AddFromEventL(aLine);
+			}
+		TTime due = ParseTime(Field(aLine, 5));
+		if (due != Time::NullTTime()) e->CastToTodo()->SetDueDate(due);
+		else e->CastToTodo()->MakeUndated();
+		FillL(e, aLine, due);
+		iModel->UpdateEntryL(e);
+		CleanupStack::PopAndDestroy();
+		return aAuid;
+		}
 	TBool isAppt = e->Type() == CAgnEntry::EAppt;
 	if ((e->Type() != CAgnEntry::EAppt && e->Type() != CAgnEntry::EEvent) || isAppt == allday || e->IsRepeating())
 		{
@@ -1228,14 +1371,16 @@ TBool CPmCalSync::MappedStepL()
 		else
 			f.local_changed = !gone && changed != m.iChanged;
 		f.on_server = ev >= 0;
-		f.in_window = start == Time::NullTTime() || (start >= iWinStart && start < iWinEnd);
+		f.in_window = start == Time::NullTTime() || (start >= iWinStart && start < iWinEnd) ||
+			(iSettings.iSpare[0] & KPmCalOptTodos);       // (to-dos: no window; an event's start is in it anyway)
 		const TDesC8* line = NULL;
 		TUint32 hash = 0;
 		if (ev >= 0)
 			{
 			line = (*iEvents)[ev].iLine;
 			hash = (*iEvents)[ev].iHash;
-			f.readable = ParseTime(Field(*line, 5)) != Time::NullTTime() && ParseTime(Field(*line, 6)) != Time::NullTTime();
+			f.readable = IsTodo(Field(*line, 4)) ||
+				(ParseTime(Field(*line, 5)) != Time::NullTTime() && ParseTime(Field(*line, 6)) != Time::NullTTime());
 			f.writable = Writable(*line);
 			if (series)
 				hash = Fnv(Field(*line, 2));   // a series: changed on the server when its etag moves
@@ -1398,8 +1543,11 @@ TBool CPmCalSync::NewStepL()
 		{
 		TPmCalEvent& ev = (*iEvents)[iPos];
 		if (ev.iMapped >= 0) continue;
-		if (ParseTime(Field(*ev.iLine, 5)) == Time::NullTTime() || ParseTime(Field(*ev.iLine, 6)) == Time::NullTTime())
+		if (!IsTodo(Field(*ev.iLine, 4)) &&
+			(ParseTime(Field(*ev.iLine, 5)) == Time::NullTTime() || ParseTime(Field(*ev.iLine, 6)) == Time::NullTTime()))
 			continue;                          // a line we can't read
+		if (IsTodo(Field(*ev.iLine, 4)) && !(iSettings.iSpare[0] & KPmCalOptTodos))
+			continue;
 		EventKey(*ev.iLine, key);
 		TUint32 auid = AddFromEventL(*ev.iLine);
 		ev.iMapped = AddMapL(auid, key, ev.iHash, 0);
@@ -1429,7 +1577,8 @@ TBool CPmCalSync::LocalStepL()
 		{
 		if (it->HasBeenDeleted()) continue;
 		CAgnEntry::TType type = it->Type();
-		if (type != CAgnEntry::EAppt && type != CAgnEntry::EEvent) continue;
+		if (type != CAgnEntry::EAppt && type != CAgnEntry::EEvent &&
+			!(type == CAgnEntry::ETodo && (iSettings.iSpare[0] & KPmCalOptTodos))) continue;
 		TUint32 auid = it->UniqueId().Id();
 		TTime changed = it->LastChangedDate();
 		{
@@ -1458,6 +1607,13 @@ TBool CPmCalSync::LocalStepL()
 		if (!e) continue;
 		CleanupStack::PushL(e);
 		TTime start = e->Type() == CAgnEntry::EAppt ? e->CastToAppt()->StartDateTime() : e->InstanceStartDate();
+		if (e->Type() == CAgnEntry::ETodo)
+			{
+			PushEntryL('N', auid, e, KNullDesC8);
+			AddMapL(auid, KNullDesC8, 0, KMapPending);
+			CleanupStack::PopAndDestroy();
+			continue;
+			}
 		// repeating Psion entries stay on the Psion, unless KPmCalOptRepeats:
 		// then they go as a series if their repeat can be said as an RRULE
 		// and the series has not ended before the window

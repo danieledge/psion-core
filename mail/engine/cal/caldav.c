@@ -12,7 +12,8 @@
  *   <store>cal\calendars.txt  "#PSICAL1 TAB home", then per calendar:
  *                             id TAB sync(0/1) TAB ctag TAB href TAB flags TAB name TAB colour
  *                             (colour: RRGGBB, the calendar's calendar-color, "" none)
- *                             (flags: W writable, D where new events go)
+ *                             (flags: W writable, D where new events go,
+ *                             T (PsiSync) it keeps to-dos)
  *   <store>cal\events.txt     "#PSIEV1 TAB first day TAB zone", then per instance:
  *                             calid TAB href TAB etag TAB recurid TAB flags TAB
  *                             start TAB end TAB alarm TAB summary TAB location
@@ -22,6 +23,8 @@
  *                             first ten fields are hashed, as before)
  *                             (times local, YYYYMMDDHHMM; flags: A all day,
  *                             R one of a series; alarm: minutes before, -1 none)
+ *                             (PsiSync) a to-do: flags T (and C when done), start
+ *                             and end its due ("" undated), alarm its priority
  *   <store>cal\push.txt       (app) changes to send, one per line:
  *                             N TAB key TAB calid TAB start TAB end TAB flags TAB alarm TAB summary TAB location
  *                             M TAB key TAB href TAB etag TAB recurid TAB start TAB end TAB flags TAB alarm TAB summary TAB location
@@ -189,7 +192,7 @@ typedef struct
 	char name[64];
 	char ctag[100];
 	char color[16];          /* calendar-color, "#RRGGBB" or "#RRGGBBAA" */
-	int is_cal, vevent, comps, writable;
+	int is_cal, vevent, vtodo, comps, writable;
 	int got_data;
 	int ndata;
 	/* discovery */
@@ -287,10 +290,11 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 	else if (!strcmp(name, "comp") && !strcmp(xs_parent(x, 1), "supported-calendar-component-set")) {
 		d->comps = 1;
 		if (pm_stristr(x->tag, "VEVENT")) d->vevent = 1;
+		if (pm_stristr(x->tag, "VTODO")) d->vtodo = 1;
 	} else if ((!strcmp(name, "write") || !strcmp(name, "all") || !strcmp(name, "write-content")) &&
 	           !strcmp(xs_parent(x, 1), "privilege")) d->writable = 1;
 	else if (!strcmp(name, "response")) {
-		if (d->is_cal && (d->vevent || !d->comps) && d->href[0]) {
+		if (d->is_cal && (d->vevent || !d->comps || (g_t.todos && d->vtodo)) && d->href[0]) {
 			Cal *c = cal_by_href(d->href);
 			if (!c && g_ncal < MAX_CALS) {
 				c = &g_cal[g_ncal++];
@@ -306,12 +310,13 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 				pm_copy(c->name, d->name[0] ? d->name : "Calendar", sizeof(c->name));
 				c->flags[0] = 0;
 				if (d->writable) strcat(c->flags, "W");
+				if (g_t.todos && (d->vtodo || !d->comps)) strcat(c->flags, "T");   /* (PsiSync) it keeps to-dos */
 				c->colour[0] = 0;
 				if (d->color[0] == '#' && strlen(d->color) >= 7) { memcpy(c->colour, d->color + 1, 6); c->colour[6] = 0; }
 			}
 		}
 		d->href[0] = d->name[0] = d->ctag[0] = d->color[0] = 0;
-		d->is_cal = d->vevent = d->comps = d->writable = 0;
+		d->is_cal = d->vevent = d->vtodo = d->comps = d->writable = 0;
 	}
 }
 
@@ -396,6 +401,27 @@ static void one_event(const IcsEvent *e, void *ctx)
 	d->count++;
 }
 
+/* (PsiSync) a to-do as an events.txt line */
+static void one_todo(const IcsTodo *t, void *ctx)
+{
+	Dav *d = (Dav *)ctx;
+	char a[16], summary[200];
+	if (t->cancelled) return;
+	a[0] = 0;
+	if (t->has_due) {
+		long due = t->due;
+		if (t->due_utc) due = cal_utc_to_local(g_t.zone, due);
+		cal_fmt_local(due, a);
+	}
+	pm_copy(summary, t->summary[0] ? t->summary : "(no title)", sizeof(summary));
+	clean(summary);
+	fprintf(d->out, "%s\t%s\t%s\t\tT%s\t%s\t%s\t%d\t%s\t\n", d->calid, d->href, d->etag,
+		t->done ? "C" : "", a, a, t->priority, summary);
+	d->count++;
+}
+
+static int g_todo_report;      /* the report being read is of to-dos */
+
 static void report_end(XmlScan *x, const char *name, const char *text, int len, void *ctx)
 {
 	Dav *d = (Dav *)ctx;
@@ -415,7 +441,10 @@ static void report_end(XmlScan *x, const char *name, const char *text, int len, 
 			d->got_data = 1;
 		}
 	} else if (!strcmp(name, "response")) {
-		if (d->got_data && d->href[0]) ics_each(g_obj, d->ndata, one_event, d);
+		if (d->got_data && d->href[0]) {
+			if (g_todo_report) ics_each_todo(g_obj, d->ndata, one_todo, d);
+			else ics_each(g_obj, d->ndata, one_event, d);
+		}
 		d->href[0] = d->etag[0] = 0;
 		d->got_data = 0;
 	}
@@ -462,6 +491,29 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", c->name, r.status); return CAL_RES_FAILED; }
 	pm_log("caldav: %s: %d events", c->name, g_dav->count);
+	if (g_t.todos && strchr(c->flags, 'T')) {
+		/* (PsiSync) its to-dos: all of them, not expanded */
+		int events = g_dav->count;
+		n = snprintf(body, sizeof(body),
+			"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+			"<C:calendar-query xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
+			"<D:prop><D:getetag/><C:calendar-data/></D:prop>"
+			"<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VTODO\"/></C:comp-filter></C:filter>"
+			"</C:calendar-query>");
+		pm_progress("Fetching %s's to-dos...", c->name);
+		memset(g_dav, 0, sizeof(*g_dav));
+		g_dav->out = out;
+		g_dav->calid = c->id;
+		g_dav->count = events;
+		xs_init(&g_dav->x, g_text, TEXT_MAX, report_end, g_dav);
+		g_todo_report = 1;
+		res = http_request("REPORT", c->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
+			body, n, &r, sink, g_dav, why, whymax);
+		g_todo_report = 0;
+		if (res != CAL_RES_OK) return res;
+		if (r.status != 207) { snprintf(why, whymax, "Could not read %s's to-dos (%d)", c->name, r.status); return CAL_RES_FAILED; }
+		pm_log("caldav: %s: %d to-dos", c->name, g_dav->count - events);
+	}
 	return CAL_RES_OK;
 }
 
@@ -505,6 +557,14 @@ static void read_change(char **p, IcsChange *c)
 	flags = field(p);
 	c->allday = strchr(flags, 'A') != 0;
 	c->alarm = atoi(field(p));
+	if (strchr(flags, 'T')) {
+		/* (PsiSync) a to-do: its due (0 none), done, priority in the alarm's place */
+		c->todo = 1;
+		c->done = strchr(flags, 'C') != 0;
+		c->priority = c->alarm;
+		c->alarm = -2;
+		if (c->start < 0) c->start = 0;
+	}
 	pm_copy(c->summary, field(p), sizeof(c->summary));
 	pm_copy(c->location, field(p), sizeof(c->location));
 }
@@ -555,7 +615,7 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 			for (i = 0; i < 8; i++) sprintf(uid + i * 2, "%02x", rnd[i]);
 			strcat(uid, "-psion");
 		}
-		len = ics_new(&c, g_t.zone, uid, g_obj, OBJ_MAX);
+		len = c.todo ? ics_todo_new(&c, g_t.zone, uid, g_obj, OBJ_MAX) : ics_new(&c, g_t.zone, uid, g_obj, OBJ_MAX);
 		if (len < 0) { pushed(res, key, "failed", ""); return CAL_RES_OK; }
 		snprintf(href, sizeof(href), "%s%s.ics", cal->href, uid);
 		rc = http_request("PUT", href, "Content-Type: text/calendar; charset=utf-8\r\nIf-None-Match: *\r\n",
@@ -612,7 +672,8 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		if (op[0] == 'M') {
 			read_change(&p, &c);
 			read_repeat(&p, &c);
-			len = ics_change(g_obj, len, OBJ_MAX - 1, recurid, &c, g_t.zone);
+			len = c.todo ? ics_todo_change(g_obj, len, OBJ_MAX - 1, &c, g_t.zone)
+			             : ics_change(g_obj, len, OBJ_MAX - 1, recurid, &c, g_t.zone);
 		} else len = ics_exclude(g_obj, len, OBJ_MAX - 1, recurid, g_t.zone);
 		if (len < 0) { pushed(res, key, "failed", href); return CAL_RES_OK; }
 		snprintf(hdr, sizeof(hdr), "Content-Type: text/calendar; charset=utf-8\r\n%s%s%s",

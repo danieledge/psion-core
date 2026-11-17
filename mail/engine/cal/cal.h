@@ -96,7 +96,28 @@ typedef struct
 	int series;
 	char rrule[120];         /* "FREQ=WEEKLY;BYDAY=MO,TH" (cal_rrule) */
 	char exdates[240];       /* the instances taken out: local dates "20261201,20261208" */
+	/* (PsiSync) a to-do (VTODO): start = its due date (local, 0 none) */
+	int todo;
+	int done;                /* crossed out: COMPLETED */
+	int priority;            /* 1 (high) .. 9, 0 none */
 	} IcsChange;
+/* (PsiSync) a to-do from the server: start = its due (local wall clock for
+   a date or a floating time, else UTC), has_due 0 = undated */
+typedef struct
+	{
+	char uid[120];
+	char summary[200];       /* cp1252 */
+	long due;
+	int has_due, due_date_only, due_utc;
+	int priority;            /* 0..9 */
+	int done;                /* STATUS:COMPLETED or a COMPLETED date */
+	int cancelled;
+	} IcsTodo;
+int  ics_each_todo(const char *text, int len, void (*fn)(const IcsTodo *t, void *ctx), void *ctx);
+/* a new VCALENDAR with one VTODO; and the change of the first VTODO of an
+   object (its summary, due date, priority and done-ness; the rest kept) */
+int  ics_todo_new(const IcsChange *c, int zone, const char *uid, char *out, int max);
+int  ics_todo_change(char *buf, int len, int max, const IcsChange *c, int zone);
 /* A new VCALENDAR (UTF-8) with one event. Returns length, -1 if too big. */
 int  ics_new(const IcsChange *c, int zone, const char *uid, char *out, int max);
 /* Edits a calendar object (UTF-8, in place in buf of size max): the master

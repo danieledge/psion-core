@@ -45,6 +45,7 @@ typedef struct
 	int zone;                /* the Psion's time zone (caltz.c) */
 	int days_back;           /* events from this many days ago (< 0: 30) */
 	int days_ahead;          /* to this many days ahead (<= 0: 180) */
+	int todos;               /* (PsiSync) the calendars' to-dos too (0: PsiMail, events only) */
 	} CalTarget;
 void calp_target(CalTarget *t);
 /* the program's data folder, ending in the separator: the engine keeps its

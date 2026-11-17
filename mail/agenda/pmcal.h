@@ -33,6 +33,7 @@ inline TPtrC Clip(const TDesC& aText, TInt aMax)
 	}
 
 class CAgnEntryModel;
+class TAgnTodoListId;
 class RAgendaServ;
 class CAgnEntry;
 class CParaFormatLayer;
@@ -52,7 +53,8 @@ const TInt KPmCalOptKeepBoth = 1;   // both sides changed: keep the Psion's as a
 const TInt KPmCalOptRepeats = 2;    // repeating Agenda entries go to the server (RRULE)
 const TInt KPmCalOptGuard = 4;      // most entries gone from the server at once: delete none, say so
 const TInt KPmCalOptSidecar = 16;   // write sidecar.txt (calendar, colour, zone, attendees per entry: psion-netbook docs/agenda-sync-contract.md)
-const TInt KPmCalOptStamp = 8;      // an entry's change told by a hash of what it shows, not the Agenda's minute-long date
+const TInt KPmCalOptStamp = 8;
+const TInt KPmCalOptTodos = 32;     // to-dos both ways (events.txt's T lines <-> Agenda to-do lists named after the calendars)      // an entry's change told by a hash of what it shows, not the Agenda's minute-long date
 
 class MPmCalObserver
 	{
@@ -114,6 +116,8 @@ private:
 	TBool MappedStepL();
 	void GuardCheck();
 	TUint32 CopyEntryL(TUint32 aAuid);
+	TAgnTodoListId TodoListL(const TDesC8& aCalId);
+	void CalForList(TAgnTodoListId aList, TDes8& aCalId);
 	TBool NewStepL();
 	TBool LocalStepL();
 	void FinishL();
@@ -167,6 +171,7 @@ private:
 	CArrayFixFlat<TPmCalMap>* iMap;
 	CArrayPtrFlat<HBufC8>* iPush;
 	CDesC8ArrayFlat* iWritable;
+	CDesC8ArrayFlat* iCalNames;   // "id TAB name" of each calendar (the to-do lists')
 	TBuf8<12> iDefaultCal;
 	TInt64 iSince;
 	TTime iWinStart, iWinEnd;
