@@ -557,8 +557,13 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 			n = snprintf(body, sizeof(body), "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				"<C:calendar-multiget xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
 				"<D:prop><D:getetag/><C:calendar-data/></D:prop>");
-			for (k = 0; k < 8 && i < g_nseries; k++, i++)
+			/* (as many as fit: snprintf returns the length asked for, and
+			   eight long addresses once ran n past the buffer's end, so the
+			   next piece was written with a size gone negative) */
+			for (k = 0; k < 8 && i < g_nseries; k++, i++) {
+				if (n + (int)strlen(g_series[i]) + 60 >= (int)sizeof(body)) break;
 				n += snprintf(body + n, sizeof(body) - n, "<D:href>%s</D:href>", g_series[i]);
+			}
 			n += snprintf(body + n, sizeof(body) - n, "</C:calendar-multiget>");
 			if (n >= (int)sizeof(body) - 1) break;
 			memset(g_dav, 0, sizeof(*g_dav));
