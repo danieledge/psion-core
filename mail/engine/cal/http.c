@@ -12,6 +12,7 @@
 #include "cal.h"
 
 static char g_host[80], g_auth[300];
+static char g_base[80];               /* the host set up (http_target): http_follow stays in its domain */
 /* the User-Agent: a program's own (http_user_agent), or ("" until then)
    the one every caller sent before there was a choice. (Zeroed, not
    initialised data.) */
@@ -50,11 +51,59 @@ void http_target(const char *host, int port, int tls, const char *user, const ch
 	char raw[200];
 	if (strcmp(host, g_host) || port != g_port) g_conn = -1;
 	pm_copy(g_host, host, sizeof(g_host));
+	pm_copy(g_base, host, sizeof(g_base));
 	g_port = port;
 	g_tls = tls;
 	snprintf(raw, sizeof(raw), "%s:%s", user, pass);
 	b64((const unsigned char *)raw, (int)strlen(raw), g_auth);
 	memset(raw, 0, sizeof(raw));
+}
+
+/* is host the one set up, or in its domain? ("caldav.icloud.com": any
+   *.icloud.com; a name without a dot, or an address, only itself) */
+static int same_domain(const char *host)
+{
+	const char *dom = strchr(g_base, '.');
+	int hl = (int)strlen(host), dl;
+	if (!pm_strncasecmp(host, g_base, 80) && hl == (int)strlen(g_base)) return 1;
+	if (!dom || !strchr(dom + 1, '.') || strspn(g_base, "0123456789.") == strlen(g_base)) return 0;
+	dl = (int)strlen(dom);                   /* ".icloud.com" */
+	return hl > dl && !pm_strncasecmp(host + hl - dl, dom, dl);
+}
+
+void http_follow(const char *url, char *out, int max)
+{
+	const char *p = url, *h, *e, *slash;
+	char host[80];
+	int tls = -1, port, n;
+	if (!pm_strncasecmp(p, "https://", 8)) { tls = 1; p += 8; }
+	else if (!pm_strncasecmp(p, "http://", 7)) { tls = 0; p += 7; }
+	if (tls < 0) { pm_copy(out, url[0] ? url : "/", max); return; }       /* a path already */
+	slash = strchr(p, '/');
+	pm_copy(out, slash ? slash : "/", max);
+	h = p;
+	e = slash ? slash : p + strlen(p);
+	for (n = 0; h + n < e && h[n] != ':' && h[n] != '@'; n++) {}
+	if (h + n < e && h[n] == '@') return;   /* (user@host: not followed) */
+	if (n <= 0 || n >= (int)sizeof(host)) return;
+	memcpy(host, h, n);
+	host[n] = 0;
+	port = tls ? 443 : 80;
+	if (h[n] == ':') {
+		port = atoi(h + n + 1);
+		if (port <= 0 || port > 65535) return;
+	}
+	if (tls != g_tls || !same_domain(host)) {
+		if (pm_strncasecmp(host, g_host, 80) || port != g_port)
+			pm_log("http: %s:%d not followed (another domain or scheme): only the path", host, port);
+		return;
+	}
+	if (pm_strncasecmp(host, g_host, 80) || (int)strlen(host) != (int)strlen(g_host) || port != g_port) {
+		pm_log("http: now to %s:%d", host, port);
+		pm_copy(g_host, host, sizeof(g_host));
+		g_port = port;
+		g_conn = -1;                             /* (the next request connects there) */
+	}
 }
 
 void http_close(void)

@@ -159,6 +159,13 @@ int  http_request(const char *method, const char *path, const char *headers,
                   const char *body, int blen, HttpResp *r, HttpSink sink, void *ctx,
                   char *why, int whymax);
 void http_close(void);
+/* a URL the server gave (a redirect's Location, a home collection's href):
+   its path into out. If it names another host in the domain of the one set
+   up (iCloud: caldav.icloud.com hands out p68-caldav.icloud.com), with the
+   same scheme, requests go to that host from then on (until http_target).
+   Any other host, or http:// for https://, is not followed: only the path
+   is used, so a password is never sent outside the server's domain. */
+void http_follow(const char *url, char *out, int max);
 
 /* ---- CalDAV (caldav.c) */
 int  cal_sync(int list_only, char *why, int whymax);

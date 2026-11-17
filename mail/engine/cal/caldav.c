@@ -236,8 +236,8 @@ static void disc_end(XmlScan *x, const char *name, const char *text, int len, vo
 		char t[200];
 		pm_copy(t, text, sizeof(t));
 		trim(t);
-		if (!strcmp(up, "current-user-principal")) just_path(t, d->principal, sizeof(d->principal));
-		else if (!strcmp(up, "calendar-home-set")) just_path(t, d->home, sizeof(d->home));
+		if (!strcmp(up, "current-user-principal")) pm_copy(d->principal, t, sizeof(d->principal));
+		else if (!strcmp(up, "calendar-home-set")) pm_copy(d->home, t, sizeof(d->home));   /* (with its host: http_follow) */
 	}
 }
 
@@ -260,13 +260,13 @@ static int discover(char *why, int whymax)
 			memset(g_dav, 0, sizeof(*g_dav));
 			res = propfind(path, 0, props, g_dav, disc_end, &r, why, whymax);
 			if (res != CAL_RES_OK) return res;
-			if (r.status >= 300 && r.status < 400 && r.location[0]) { just_path(r.location, path, sizeof(path)); continue; }
+			if (r.status >= 300 && r.status < 400 && r.location[0]) { http_follow(r.location, path, sizeof(path)); continue; }
 			break;
 		}
 		if (r.status != 207) continue;
 		if (g_dav->home[0]) { pm_copy(g_home, g_dav->home, sizeof(g_home)); break; }
 		if (g_dav->principal[0]) {
-			pm_copy(path, g_dav->principal, sizeof(path));
+			http_follow(g_dav->principal, path, sizeof(path));
 			memset(g_dav, 0, sizeof(*g_dav));
 			res = propfind(path, 0, props, g_dav, disc_end, &r, why, whymax);
 			if (res != CAL_RES_OK) return res;
@@ -326,6 +326,7 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 static int list_calendars(char *why, int whymax)
 {
 	HttpResp r;
+	char home[200];
 	int res, i, def = -1;
 	pm_progress("Looking for calendars...");
 	if (!g_home[0]) {
@@ -334,7 +335,9 @@ static int list_calendars(char *why, int whymax)
 	}
 	for (i = 0; i < g_ncal; i++) { g_cal[i].seen = 0; g_cal[i].fetch = 0; }
 	memset(g_dav, 0, sizeof(*g_dav));
-	res = propfind(g_home, 1,
+	/* (the home may be on another of the server's hosts: iCloud's partitions) */
+	http_follow(g_home, home, sizeof(home));
+	res = propfind(home, 1,
 		"<D:resourcetype/><D:displayname/><CS:getctag/><C:supported-calendar-component-set/>"
 		"<D:current-user-privilege-set/><A:calendar-color/>", g_dav, list_end, &r, why, whymax);
 	if (res != CAL_RES_OK) return res;
