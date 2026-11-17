@@ -1166,6 +1166,163 @@ void CPmCalSync::CalForList(TAgnTodoListId aList, TDes8& aCalId)
 	CleanupStack::PopAndDestroy();
 	}
 
+// (KPmCalOptSeriesIn) the Agenda's repeat for a calendar repeat
+static CAgnRptDef* RptFromL(const CalRepeat& aR, const TTime& aStart)
+	{
+	CAgnRptDef* r = CAgnRptDef::NewL();
+	CleanupStack::PushL(r);
+	TTime end = Time::NullTTime();
+	if (!aR.forever)
+		{
+		TPtrC8 u((const TUint8*)aR.until);
+		TInt y = 0, m = 0, d = 0;
+		TLex8 ly(u.Left(4)), lm(u.Mid(4, 2)), ld(u.Mid(6, 2));
+		ly.Val(y); lm.Val(m); ld.Val(d);
+		if (m >= 1 && m <= 12 && d >= 1 && d <= 31)
+			end = TTime(TDateTime(y, TMonth(m - 1), d - 1, 0, 0, 0, 0));
+		}
+	TInt i, w;
+	switch (aR.type)
+		{
+	case CR_DAILY:
+		{ TAgnDailyRpt x; x.SetStartDate(aStart); r->SetDaily(x); }
+		break;
+	case CR_WEEKLY:
+		{
+		TAgnWeeklyRpt x;
+		x.SetStartDate(aStart);
+		for (i = 0; i < 7; i++) if (aR.weekdays & (1 << i)) x.SetDay((TDay)i);
+		r->SetWeekly(x);
+		}
+		break;
+	case CR_MONTHLY_DATES:
+		{
+		TAgnMonthlyByDatesRpt x;
+		x.SetStartDate(aStart);
+		for (i = 0; i < 31; i++) if (aR.dates & (1UL << i)) x.SetDate(i);
+		r->SetMonthlyByDates(x);
+		}
+		break;
+	case CR_MONTHLY_DAYS:
+		{
+		TAgnMonthlyByDaysRpt x;
+		x.SetStartDate(aStart);
+		for (w = 0; w < 5; w++)
+			for (i = 0; i < 7; i++)
+				if (aR.weeks[w] & (1 << i)) x.SetDay((TDay)i, (TAgnRpt::TWeekInMonth)w);
+		r->SetMonthlyByDays(x);
+		}
+		break;
+	case CR_YEARLY_DATE:
+		{ TAgnYearlyByDateRpt x; x.SetStartDate(aStart); r->SetYearlyByDate(x); }
+		break;
+	case CR_YEARLY_DAY:
+		{
+		TAgnYearlyByDayRpt x;
+		x.SetStartDay((TDay)aR.yday, (TAgnRpt::TWeekInMonth)aR.yweek, TMonth(aR.ymonth), aStart.DateTime().Year());
+		r->SetYearlyByDay(x);
+		}
+		break;
+	default:
+		User::Leave(KErrNotSupported);
+		}
+	r->SetStartDate(aStart);
+	r->SetInterval(aR.interval > 0 ? aR.interval : 1);
+	if (end == Time::NullTTime())
+		r->SetRepeatForever(ETrue);
+	else
+		{
+		r->SetRepeatForever(EFalse);
+		r->SetEndDate(end);
+		}
+	CleanupStack::Pop();
+	return r;
+	}
+
+// the S line (a series the Agenda can repeat) for a server event, -1
+TInt CPmCalSync::SeriesLine(const TDesC8& aHref) const
+	{
+	for (TInt i = 0; i < iEvents->Count(); i++)
+		{
+		const TDesC8& l = *(*iEvents)[i].iLine;
+		if (Field(l, 4).Locate('S') >= 0 && Field(l, 1) == aHref) return i;
+		}
+	return -1;
+	}
+
+// (KPmCalOptSeriesIn) a series as one repeating Agenda entry: its first
+// instance's times, its rule, the dates taken out of it
+TUint32 CPmCalSync::AddSeriesL(const TDesC8& aLine)
+	{
+	TTime start = ParseTime(Field(aLine, 5)), end = ParseTime(Field(aLine, 6));
+	if (start == Time::NullTTime() || end == Time::NullTTime())
+		return 0;
+	CalRepeat rr;
+	TBuf8<170> rule(Clip(Field(aLine, 14), 160));
+	rule.Append(0);
+	TDateTime sd = start.DateTime();
+	if (cal_rrule_parse((const char*)rule.Ptr(), sd.Year(), sd.Month() + 1, sd.Day() + 1, &rr) != 0)
+		return 0;
+	TBool allday = Field(aLine, 4).Locate('A') >= 0;
+	CAgnEntry* e;
+	if (allday)
+		{
+		CAgnEvent* ev = CAgnEvent::NewL(iPara, iChar);
+		e = ev;
+		CleanupStack::PushL(e);
+		ev->SetStartAndEndDate(start, end);
+		}
+	else
+		{
+		CAgnAppt* a = CAgnAppt::NewL(iPara, iChar);
+		e = a;
+		CleanupStack::PushL(e);
+		a->SetStartAndEndDateTime(start, end);
+		}
+	CAgnRptDef* r = RptFromL(rr, Midnight(start));
+	CleanupStack::PushL(r);
+	// the dates taken out: "20261201,20261208"
+	TPtrC8 ex = Field(aLine, 15);
+	while (ex.Length() >= 8)
+		{
+		TTime d = ParseTime(ex.Left(8));
+		if (d != Time::NullTTime())
+			r->AddExceptionL(TAgnException(AgnDateTime::TTimeToAgnDate(d)));
+		TInt comma = ex.Locate(',');
+		ex.Set(comma < 0 ? TPtrC8() : ex.Mid(comma + 1));
+		}
+	e->SetRptDefL(r);
+	CleanupStack::PopAndDestroy();       // r (the entry has a copy)
+	FillL(e, aLine, start);
+	TAgnEntryId id = iModel->AddEntryL(e);
+	CleanupStack::PopAndDestroy();       // e
+	return iServ->GetUniqueId(id).Id();
+	}
+
+// (KPmCalOptSeriesIn) before the single instances: each S line not linked
+// yet, and none of whose instances is, becomes one repeating entry; its
+// instances are then its own (NewStepL leaves them)
+void CPmCalSync::SeriesPrePassL()
+	{
+	for (TInt i = 0; i < iEvents->Count(); i++)
+		{
+		TPmCalEvent& ev = (*iEvents)[i];
+		if (Field(*ev.iLine, 4).Locate('S') < 0 || ev.iMapped >= 0) continue;
+		TPtrC8 href = Field(*ev.iLine, 1);
+		TBool linked = EFalse;
+		for (TInt k = 0; k < iEvents->Count() && !linked; k++)
+			if ((*iEvents)[k].iMapped >= 0 && Field(*(*iEvents)[k].iLine, 1) == href) linked = ETrue;
+		if (linked) continue;                // (its instances are linked one by one already)
+		TUint32 auid = AddSeriesL(*ev.iLine);
+		if (!auid) continue;
+		TBuf8<210> key(Clip(href, 200));
+		key.Append(_L8("|*"));
+		TInt m = AddMapL(auid, key, Fnv(Field(*ev.iLine, 2)), KMapSeries);
+		FindSeries(key, m);
+		iAdded++;
+		}
+	}
+
 TUint32 CPmCalSync::AddFromEventL(const TDesC8& aLine)
 	{
 	if (IsTodo(Field(aLine, 4)))
@@ -1392,6 +1549,24 @@ TBool CPmCalSync::MappedStepL()
 			action = CM_SKIP;                  // held back: see GuardCheck
 		if (f.on_server && f.readable && !f.gone && f.no_baseline && !(m.iFlags & KMapForce))
 			m.iHash = hash;                     // made here: the server's copy is ours
+		TInt sline = series && (iSettings.iSpare[0] & KPmCalOptSeriesIn) ? SeriesLine(Field(*m.iKey, 0).Left(Max(0, m.iKey->Length() - 2))) : -1;
+		if (series && sline >= 0 && (action == CM_UPDATE_LOCAL || action == CM_KEEP_BOTH || action == CM_READD))
+			{
+			// the server's series as a repeat again: the old entry goes
+			// (unless it was changed here too: then it stays, unlinked, and is sent as new)
+			if (action == CM_UPDATE_LOCAL) DeleteL(m.iAuid);
+			TUint32 na = AddSeriesL(*(*iEvents)[sline].iLine);
+			if (na)
+				{
+				m.iAuid = na;
+				m.iChanged = Changed(na);
+				m.iHash = Fnv(Field(*(*iEvents)[sline].iLine, 2));
+				m.iFlags = KMapSeries;
+				if (action == CM_KEEP_BOTH) iKept++; else if (action == CM_READD) iAdded++; else iChangedN++;
+				iPos++;
+				continue;
+				}
+			}
 		if (series && (action == CM_UPDATE_LOCAL || action == CM_KEEP_BOTH || action == CM_READD))
 			{
 			// the Agenda can't be given the server's series back as a repeat:
@@ -1539,10 +1714,13 @@ TBool CPmCalSync::NewStepL()
 	prog.Format(_L("Updating the Agenda (%d%%)..."), 50 + (iEvents->Count() ? iPos * 40 / iEvents->Count() : 40));
 	iObserver.CalProgress(prog);
 	TBuf8<260> key;
+	if (iPos == 0 && (iSettings.iSpare[0] & KPmCalOptSeriesIn))
+		SeriesPrePassL();
 	for (TInt n = 0; n < KStep && iPos < iEvents->Count(); iPos++)
 		{
 		TPmCalEvent& ev = (*iEvents)[iPos];
 		if (ev.iMapped >= 0) continue;
+		if (Field(*ev.iLine, 4).Locate('S') >= 0) continue;   // (a series' line: SeriesPrePassL's)
 		if (!IsTodo(Field(*ev.iLine, 4)) &&
 			(ParseTime(Field(*ev.iLine, 5)) == Time::NullTTime() || ParseTime(Field(*ev.iLine, 6)) == Time::NullTTime()))
 			continue;                          // a line we can't read

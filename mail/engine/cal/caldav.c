@@ -21,6 +21,9 @@
  *                             (PsiSync's sidecar: the event's TZID; A D T N or ""
  *                             as for "Name <email> S;..." attendees; only the
  *                             first ten fields are hashed, as before)
+ *                             (PsiSync) a series the Agenda can repeat: flags S (and A),
+ *                             start and end its first instance's, then after the
+ *                             attendees TAB rrule TAB exdates; its instances stay too
  *                             (times local, YYYYMMDDHHMM; flags: A all day,
  *                             R one of a series; alarm: minutes before, -1 none)
  *                             (PsiSync) a to-do: flags T (and C when done), start
@@ -371,6 +374,8 @@ static int list_calendars(char *why, int whymax)
 
 typedef struct { Dav *d; } EvCtx;
 
+static void note_series(const char *href, const char *etag);
+
 static void one_event(const IcsEvent *e, void *ctx)
 {
 	Dav *d = (Dav *)ctx;
@@ -378,6 +383,7 @@ static void one_event(const IcsEvent *e, void *ctx)
 	long s = e->start, en = e->end;
 	char a[16], b[16], summary[200], location[120];
 	if (e->cancelled) return;
+	if (g_t.series && (e->recurid[0] || e->recurring)) note_series(d->href, d->etag);
 	if (!e->allday && !e->floating) { s = cal_utc_to_local(zone, s); en = cal_utc_to_local(zone, en); }
 	if (e->allday && en > s) en -= 86400;          /* DTEND is the day after */
 	cal_fmt_local(s, a);
@@ -422,6 +428,31 @@ static void one_todo(const IcsTodo *t, void *ctx)
 
 static int g_todo_report;      /* the report being read is of to-dos */
 
+/* (PsiSync) series seen in this calendar's report: their masters are asked
+   for afterwards, unexpanded, to give the Agenda a repeat */
+#define MAX_SERIES 48
+static char g_series[MAX_SERIES][200];
+static char g_series_etag[MAX_SERIES][80];
+static int g_nseries;
+
+static void note_series(const char *href, const char *etag)
+{
+	int i;
+	for (i = 0; i < g_nseries; i++) if (!strcmp(g_series[i], href)) return;
+	if (g_nseries < MAX_SERIES) { pm_copy(g_series[g_nseries], href, 200); pm_copy(g_series_etag[g_nseries++], etag, 80); }
+}
+
+/* a master read (calendar-multiget): the series as one line, if the Agenda can say its rule */
+typedef struct { IcsEvent master; int have, overrides; } MasterCtx;
+static void one_part(const IcsEvent *e, void *ctx)
+{
+	MasterCtx *m = (MasterCtx *)ctx;
+	if (e->recurid[0]) m->overrides++;
+	else if (e->recurring) { m->master = *e; m->have = 1; }
+}
+
+static int g_master_report;
+
 static void report_end(XmlScan *x, const char *name, const char *text, int len, void *ctx)
 {
 	Dav *d = (Dav *)ctx;
@@ -443,6 +474,32 @@ static void report_end(XmlScan *x, const char *name, const char *text, int len, 
 	} else if (!strcmp(name, "response")) {
 		if (d->got_data && d->href[0]) {
 			if (g_todo_report) ics_each_todo(g_obj, d->ndata, one_todo, d);
+			else if (g_master_report) {
+				MasterCtx m;
+				memset(&m, 0, sizeof(m));
+				ics_each(g_obj, d->ndata, one_part, &m);
+				if (m.have && !m.overrides && m.master.rrule[0] && m.master.rrule[0] != '!') {
+					const IcsEvent *e = &m.master;
+					long s = e->start, en = e->end;
+					char a[16], b[16], summary[200], location[120];
+					int y, mo, dd;
+					CalRepeat rpt;
+					if (!e->allday && !e->floating) { s = cal_utc_to_local(g_t.zone, s); en = cal_utc_to_local(g_t.zone, en); }
+					if (e->allday && en > s) en -= 86400;
+					cal_civil(s / 86400, &y, &mo, &dd);
+					if (cal_rrule_parse(e->rrule, y, mo, dd, &rpt) == 0) {
+						cal_fmt_local(s, a);
+						cal_fmt_local(en, b);
+						pm_copy(summary, e->summary[0] ? e->summary : "(no title)", sizeof(summary));
+						pm_copy(location, e->location, sizeof(location));
+						clean(summary); clean(location);
+						fprintf(d->out, "%s\t%s\t%s\t\tS%s\t%s\t%s\t%d\t%s\t%s\t%s\t\t%s\t%s\t%s\t%s\n", d->calid, d->href, d->etag,
+							e->allday ? "A" : "", a, b, e->alarm, summary, location, e->tzid, e->organizer, e->attendees,
+							e->rrule, e->exdates);
+						d->count++;
+					}
+				}
+			}
 			else ics_each(g_obj, d->ndata, one_event, d);
 		}
 		d->href[0] = d->etag[0] = 0;
@@ -482,6 +539,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 		"<C:time-range start=\"%s\" end=\"%s\"/></C:comp-filter></C:comp-filter></C:filter>"
 		"</C:calendar-query>", a, b, a, b);
 	pm_progress("Fetching %s...", c->name);
+	g_nseries = 0;
 	memset(g_dav, 0, sizeof(*g_dav));
 	g_dav->out = out;
 	g_dav->calid = c->id;
@@ -491,6 +549,33 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", c->name, r.status); return CAL_RES_FAILED; }
 	pm_log("caldav: %s: %d events", c->name, g_dav->count);
+	if (g_t.series && g_nseries) {
+		/* (PsiSync) the series' masters, unexpanded, eight at a time */
+		int i = 0, events = g_dav->count;
+		while (i < g_nseries) {
+			int k;
+			n = snprintf(body, sizeof(body), "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+				"<C:calendar-multiget xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
+				"<D:prop><D:getetag/><C:calendar-data/></D:prop>");
+			for (k = 0; k < 8 && i < g_nseries; k++, i++)
+				n += snprintf(body + n, sizeof(body) - n, "<D:href>%s</D:href>", g_series[i]);
+			n += snprintf(body + n, sizeof(body) - n, "</C:calendar-multiget>");
+			if (n >= (int)sizeof(body) - 1) break;
+			memset(g_dav, 0, sizeof(*g_dav));
+			g_dav->out = out;
+			g_dav->calid = c->id;
+			g_dav->count = events;
+			xs_init(&g_dav->x, g_text, TEXT_MAX, report_end, g_dav);
+			g_master_report = 1;
+			res = http_request("REPORT", c->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
+				body, n, &r, sink, g_dav, why, whymax);
+			g_master_report = 0;
+			if (res != CAL_RES_OK) return res;
+			events = g_dav->count;
+		}
+		pm_log("caldav: %s: %d series asked for", c->name, g_nseries);
+		g_nseries = 0;
+	}
 	if (g_t.todos && strchr(c->flags, 'T')) {
 		/* (PsiSync) its to-dos: all of them, not expanded */
 		int events = g_dav->count;

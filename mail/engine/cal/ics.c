@@ -208,7 +208,21 @@ int ics_each(const char *text, int len, void (*fn)(const IcsEvent *e, void *ctx)
 		if (!strcmp(name, "UID")) pm_copy(e.uid, v, sizeof(e.uid));
 		else if (!strcmp(name, "SUMMARY")) text_value(v, e.summary, sizeof(e.summary));
 		else if (!strcmp(name, "LOCATION")) text_value(v, e.location, sizeof(e.location));
-		else if (!strcmp(name, "RRULE") || !strcmp(name, "RDATE")) e.recurring = 1;
+		else if (!strcmp(name, "RRULE")) { e.recurring = 1; pm_copy(e.rrule, v, sizeof(e.rrule)); }
+		else if (!strcmp(name, "RDATE")) { e.recurring = 1; e.rrule[0] = '!'; e.rrule[1] = 0; }   /* (RDATEs: not the Agenda's) */
+		else if (!strcmp(name, "EXDATE")) {
+			/* each date: its first eight digits */
+			const char *q = v;
+			while (*q) {
+				int n = (int)strlen(e.exdates), k;
+				if (n + 10 >= (int)sizeof(e.exdates)) break;
+				if (n) e.exdates[n++] = ',';
+				for (k = 0; k < 8 && q[k] >= '0' && q[k] <= '9'; k++) e.exdates[n + k] = q[k];
+				e.exdates[n + k] = 0;
+				while (*q && *q != ',') q++;
+				if (*q == ',') q++;
+			}
+		}
 		else if (!strcmp(name, "STATUS")) e.cancelled = !pm_strcasecmp(v, "CANCELLED");
 		else if (!strcmp(name, "RECURRENCE-ID")) norm_recurid(params, v, 0, e.recurid);
 		else if (!strcmp(name, "ORGANIZER")) person(params, v, e.organizer, sizeof(e.organizer));

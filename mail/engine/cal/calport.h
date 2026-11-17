@@ -46,6 +46,7 @@ typedef struct
 	int days_back;           /* events from this many days ago (< 0: 30) */
 	int days_ahead;          /* to this many days ahead (<= 0: 180) */
 	int todos;               /* (PsiSync) the calendars' to-dos too (0: PsiMail, events only) */
+	int series;              /* (PsiSync) series the Agenda can repeat as S lines too */
 	} CalTarget;
 void calp_target(CalTarget *t);
 /* the program's data folder, ending in the separator: the engine keeps its

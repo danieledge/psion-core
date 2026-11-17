@@ -70,6 +70,8 @@ typedef struct
 	char tzid[48];           /* DTSTART's TZID, "" if UTC, a date or floating */
 	char organizer[120];     /* "Name <email>" (cp1252) */
 	char attendees[400];     /* "Name <email> S;..." S: A accepted, D declined, T tentative, N needs action */
+	char rrule[160];         /* (a master) its RRULE's value */
+	char exdates[240];       /* ... its EXDATEs as dates, "20261201,20261208" (UTC ones: the date in UTC) */
 	} IcsEvent;
 /* a PARTSTAT as A, D, T or N (0 if none) */
 char ics_partstat_letter(const char *partstat);

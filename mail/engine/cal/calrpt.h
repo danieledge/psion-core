@@ -22,4 +22,11 @@ typedef struct
    can't be said as one. No C library: PsiMail.app links it too. */
 int  cal_rrule(const CalRepeat *r, char *out, int max);
 
+/* (PsiSync) the other way: an RRULE value as the Agenda's repeat, for a
+   series starting on y-m-d (its DTSTART's date). 0 if the Agenda can say it
+   (r filled, r->until "YYYYMMDD" or r->forever), -1 if not: then the
+   series stays as its instances. COUNT is turned into the last date where
+   the rule makes that simple (a day, a week day, a month day, a year). */
+int  cal_rrule_parse(const char *rrule, int y, int m, int d, CalRepeat *r);
+
 #endif

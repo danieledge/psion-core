@@ -54,6 +54,7 @@ const TInt KPmCalOptRepeats = 2;    // repeating Agenda entries go to the server
 const TInt KPmCalOptGuard = 4;      // most entries gone from the server at once: delete none, say so
 const TInt KPmCalOptSidecar = 16;   // write sidecar.txt (calendar, colour, zone, attendees per entry: psion-netbook docs/agenda-sync-contract.md)
 const TInt KPmCalOptStamp = 8;
+const TInt KPmCalOptSeriesIn = 64;  // the server's series the Agenda can repeat (events.txt's S lines) as one repeating entry
 const TInt KPmCalOptTodos = 32;     // to-dos both ways (events.txt's T lines <-> Agenda to-do lists named after the calendars)      // an entry's change told by a hash of what it shows, not the Agenda's minute-long date
 
 class MPmCalObserver
@@ -116,6 +117,9 @@ private:
 	TBool MappedStepL();
 	void GuardCheck();
 	TUint32 CopyEntryL(TUint32 aAuid);
+	TUint32 AddSeriesL(const TDesC8& aLine);
+	TInt SeriesLine(const TDesC8& aHref) const;
+	void SeriesPrePassL();
 	TAgnTodoListId TodoListL(const TDesC8& aCalId);
 	void CalForList(TAgnTodoListId aList, TDes8& aCalId);
 	TBool NewStepL();
