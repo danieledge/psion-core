@@ -269,6 +269,15 @@ int vc_to_psion(const char *in, int len, char *out, int max)
 		/* FN is not Contacts': it shows the name from N (vc_merge makes FN
 		   again from N when the name changes) */
 		if (kind == 1) { pm_copy(fn, val, sizeof(fn)); continue; }
+		if (kind == 8) {
+			/* a web address is a URI, but Google writes "https\\://" and a server
+			   that takes it as text escapes the backslash again: no backslash
+			   before a ':' or ',' belongs in one */
+			int r = 0, w = 0;
+			for (; val[r]; r++)
+				if (!(val[r] == '\\' && (val[r + 1] == ':' || val[r + 1] == ',' || val[r + 1] == '\\'))) val[w++] = val[r];
+			val[w] = 0;
+		}
 		if (kind == 0) have_n = 1;
 		params21(kind, types(p.params), pr, sizeof(pr));
 		put21(&o, kKinds[kind], pr, val);
