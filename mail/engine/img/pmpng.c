@@ -21,6 +21,8 @@ typedef struct
 	int has_trns;
 	unsigned char pal_grey[256]; /* palette entries as grey */
 	unsigned char pal_alpha[256];
+	unsigned char pal_rgb[768];  /* palette entries in colour (opts->colour) */
+	int colour;                  /* rows to the sink in red, green, blue */
 	int trns_key[3];             /* the transparent colour (grey / rgb) at the file's depth */
 	} PngInfo;
 
@@ -91,6 +93,52 @@ static void row_to_grey(const PngInfo *p, const unsigned char *row, unsigned cha
 			break;
 		}
 		}
+	}
+}
+
+/* the same in colour: three bytes a pixel, transparency over white */
+static void row_to_rgb(const PngInfo *p, const unsigned char *row, unsigned char *rgb, int w)
+{
+	int x, d = p->depth, c;
+	int maxv = (1 << (d > 8 ? 8 : d)) - 1;
+	for (x = 0; x < w; x++, rgb += 3) {
+		int v[3], a = 255;
+		switch (p->ctype) {
+		case 0: {                                   /* grey */
+			int s = sample(row, x, d);
+			if (p->has_trns && s == p->trns_key[0]) a = 0;
+			if (d == 16) s >>= 8;
+			v[0] = v[1] = v[2] = s * 255 / maxv;
+			break;
+		}
+		case 2:                                     /* rgb */
+			if (d == 16) {
+				int r = (row[x * 6] << 8) | row[x * 6 + 1], g = (row[x * 6 + 2] << 8) | row[x * 6 + 3], b = (row[x * 6 + 4] << 8) | row[x * 6 + 5];
+				if (p->has_trns && r == p->trns_key[0] && g == p->trns_key[1] && b == p->trns_key[2]) a = 0;
+				v[0] = r >> 8; v[1] = g >> 8; v[2] = b >> 8;
+			} else {
+				v[0] = row[x * 3]; v[1] = row[x * 3 + 1]; v[2] = row[x * 3 + 2];
+				if (p->has_trns && v[0] == p->trns_key[0] && v[1] == p->trns_key[1] && v[2] == p->trns_key[2]) a = 0;
+			}
+			break;
+		case 3: {                                   /* palette */
+			int i = sample(row, x, d);
+			v[0] = p->pal_rgb[3 * i]; v[1] = p->pal_rgb[3 * i + 1]; v[2] = p->pal_rgb[3 * i + 2];
+			a = p->pal_alpha[i];
+			break;
+		}
+		case 4:                                     /* grey + alpha */
+			if (d == 16) { v[0] = row[x * 4]; a = row[x * 4 + 2]; }
+			else { v[0] = row[x * 2]; a = row[x * 2 + 1]; }
+			v[1] = v[2] = v[0];
+			break;
+		default:                                    /* rgb + alpha */
+			if (d == 16) { v[0] = row[x * 8]; v[1] = row[x * 8 + 2]; v[2] = row[x * 8 + 4]; a = row[x * 8 + 6]; }
+			else { v[0] = row[x * 4]; v[1] = row[x * 4 + 1]; v[2] = row[x * 4 + 2]; a = row[x * 4 + 3]; }
+			break;
+		}
+		for (c = 0; c < 3; c++)
+			rgb[c] = (unsigned char)(a == 255 ? v[c] : (v[c] * a + 255 * (255 - a)) / 255);
 	}
 }
 
@@ -170,8 +218,13 @@ static int row_done(Png *g)
 {
 	PngInfo *p = &g->info;
 	if (unfilter(g->row, g->pass_y ? g->prev : 0, g->rowbytes, p->bpp) != 0) return -1;
-	row_to_grey(p, g->row + 1, g->grey, g->pass_w);
-	if (p->interlace) {
+	if (p->colour) row_to_rgb(p, g->row + 1, g->grey, g->pass_w);
+	else row_to_grey(p, g->row + 1, g->grey, g->pass_w);
+	if (p->interlace && p->colour) {
+		int x, y = k_pass_y0[g->pass] + g->pass_y * k_pass_dy[g->pass];
+		unsigned char *dst = g->full + ((long)y * p->w + k_pass_x0[g->pass]) * 3;
+		for (x = 0; x < g->pass_w; x++) memcpy(dst + (long)x * k_pass_dx[g->pass] * 3, g->grey + 3 * x, 3);
+	} else if (p->interlace) {
 		int x, y = k_pass_y0[g->pass] + g->pass_y * k_pass_dy[g->pass];
 		unsigned char *dst = g->full + (long)y * p->w + k_pass_x0[g->pass];
 		for (x = 0; x < g->pass_w; x++) dst[(long)x * k_pass_dx[g->pass]] = g->grey[x];
@@ -220,6 +273,7 @@ int pmimg_decode_png(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 	memset(&g, 0, sizeof(g));
 	if (!pmimg_in_skip(in, 8)) { pmimg_err(err, errmax, "a damaged PNG"); return PMIMG_E_FORMAT; }
 	for (i = 0; i < 256; i++) g.info.pal_alpha[i] = 255;
+	g.info.colour = o.colour != 0;
 
 	for (;;) {
 		unsigned long len = pmimg_in_be32(in);
@@ -249,14 +303,14 @@ int pmimg_decode_png(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 			p->bits_per_pixel = p->channels * p->depth;
 			p->bpp = (p->bits_per_pixel + 7) / 8;
 			if (p->w > PMIMG_MAX_DIM || p->h > PMIMG_MAX_DIM || (long)p->w * p->h > o.max_src_pixels ||
-			    (p->interlace && (long)p->w * p->h > o.max_full_bytes)) { r = PMIMG_E_TOO_BIG; pmimg_err(err, errmax, "too big"); break; }
+			    (p->interlace && (long)p->w * p->h * (p->colour ? 3 : 1) > o.max_full_bytes)) { r = PMIMG_E_TOO_BIG; pmimg_err(err, errmax, "too big"); break; }
 			maxrow = ((long)p->w * p->bits_per_pixel + 7) / 8 + 1;
 			g.row = (unsigned char *)malloc(maxrow);
 			g.prev = (unsigned char *)malloc(maxrow);
-			g.grey = (unsigned char *)malloc(p->w);
-			if (p->interlace) g.full = (unsigned char *)malloc((long)p->w * p->h);
+			g.grey = (unsigned char *)malloc((long)p->w * (p->colour ? 3 : 1));
+			if (p->interlace) g.full = (unsigned char *)malloc((long)p->w * p->h * (p->colour ? 3 : 1));
 			if (!g.row || !g.prev || !g.grey || (p->interlace && !g.full)) { r = PMIMG_E_MEMORY; pmimg_err(err, errmax, "not enough memory"); break; }
-			if (p->interlace) memset(g.full, 0xcc, (long)p->w * p->h);
+			if (p->interlace) memset(g.full, 0xcc, (long)p->w * p->h * (p->colour ? 3 : 1));
 			g.sink = pmimg_sink_new(p->w, p->h, &o, PMIMG_PNG, &e);
 			if (!g.sink) { r = e; pmimg_err(err, errmax, e == PMIMG_E_TOO_BIG ? "too big" : "not enough memory"); break; }
 			seen_ihdr = 1;
@@ -271,6 +325,7 @@ int pmimg_decode_png(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 				unsigned char c[3];
 				if (pmimg_in_read(in, c, 3) != 3) break;
 				p->pal_grey[i] = to_grey(c[0], c[1], c[2]);
+				memcpy(p->pal_rgb + 3 * i, c, 3);
 			}
 			if (!pmimg_in_skip(in, (long)len - 3L * i + 4)) break;
 			continue;

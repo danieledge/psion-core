@@ -71,6 +71,9 @@ int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 {
 	PmImgOpts o;
 	unsigned char hdr[13], pal[256], lpal[256];
+	unsigned char prgb[768], lprgb[768];   /* the same in colour (opts->colour) */
+	const unsigned char *use_rgb = prgb;
+	int px;                                /* bytes a pixel to the sink: 1, or 3 in colour */
 	unsigned char *row = 0, *full = 0;
 	LzwTables *t = 0;
 	PmImgSink *sink = 0;
@@ -80,7 +83,9 @@ int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 	int whole;               /* the frame is the whole picture: rows can stream */
 
 	pmimg_opts_fill(&o, from);
+	px = o.colour ? 3 : 1;
 	memset(pal, 255, sizeof(pal));
+	memset(prgb, 255, sizeof(prgb));
 	if (pmimg_in_read(in, hdr, 13) != 13) { pmimg_err(err, errmax, "a damaged GIF"); return PMIMG_E_FORMAT; }
 	sw = hdr[6] | (hdr[7] << 8);
 	sh = hdr[8] | (hdr[9] << 8);
@@ -91,6 +96,7 @@ int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 			unsigned char c[3];
 			if (pmimg_in_read(in, c, 3) != 3) { pmimg_err(err, errmax, "a damaged GIF"); return PMIMG_E_FORMAT; }
 			pal[i] = (unsigned char)((c[0] * 77 + c[1] * 150 + c[2] * 29) >> 8);
+			memcpy(prgb + 3 * i, c, 3);
 		}
 		ncol = n;
 	}
@@ -120,12 +126,15 @@ int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 			if (lflags & 0x80) {
 				int n = 2 << (lflags & 7);
 				memset(lpal, 255, sizeof(lpal));
+				memset(lprgb, 255, sizeof(lprgb));
 				for (i = 0; i < n; i++) {
 					unsigned char c[3];
 					if (pmimg_in_read(in, c, 3) != 3) { pmimg_err(err, errmax, "a damaged GIF"); return PMIMG_E_FORMAT; }
 					lpal[i] = (unsigned char)((c[0] * 77 + c[1] * 150 + c[2] * 29) >> 8);
+					memcpy(lprgb + 3 * i, c, 3);
 				}
 				use_pal = lpal;
+				use_rgb = lprgb;
 				ncol = n;
 			}
 			have_frame = 1;
@@ -140,20 +149,21 @@ int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 	if (sw <= 0 || sh <= 0 || fx + fw > sw || fy + fh > sh) { sw = fw; sh = fh; fx = fy = 0; }
 	if (sw > PMIMG_MAX_DIM || sh > PMIMG_MAX_DIM || (long)sw * sh > o.max_src_pixels) { pmimg_err(err, errmax, "too big"); return PMIMG_E_TOO_BIG; }
 	whole = !interlace && fx == 0 && fy == 0 && fw == sw && fh == sh;
-	if (!whole && (long)sw * sh > o.max_full_bytes) { pmimg_err(err, errmax, "too big"); return PMIMG_E_TOO_BIG; }
+	if (!whole && (long)sw * sh * px > o.max_full_bytes) { pmimg_err(err, errmax, "too big"); return PMIMG_E_TOO_BIG; }
 	if (!ncol) ncol = 256;
 	if (transparent >= 0 && transparent < 256) {
 		/* over white */
 		if (use_pal == pal) pal[transparent] = 255; else lpal[transparent] = 255;
+		memset((use_rgb == prgb ? prgb : lprgb) + 3 * transparent, 255, 3);
 	}
 
 	sink = pmimg_sink_new(sw, sh, &o, PMIMG_GIF, &e);
 	if (!sink) { pmimg_err(err, errmax, e == PMIMG_E_TOO_BIG ? "too big" : "not enough memory"); return e; }
-	row = (unsigned char *)malloc(fw);
+	row = (unsigned char *)malloc((long)fw * px);
 	t = (LzwTables *)malloc(sizeof(LzwTables));
-	if (!whole) full = (unsigned char *)malloc((long)sw * sh);
+	if (!whole) full = (unsigned char *)malloc((long)sw * sh * px);
 	if (!row || !t || (!whole && !full)) { r = PMIMG_E_MEMORY; pmimg_err(err, errmax, "not enough memory"); goto done; }
-	if (full) memset(full, 255, (long)sw * sh);
+	if (full) memset(full, 255, (long)sw * sh * px);
 
 	/* the LZW stream */
 	{
@@ -200,7 +210,12 @@ int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 			/* out, reversed */
 			while (sp > 0 && y < fh) {
 				int idx = t->stack[--sp];
-				row[x++] = idx < ncol ? use_pal[idx] : 255;
+				if (px == 1) row[x++] = idx < ncol ? use_pal[idx] : 255;
+				else {
+					if (idx < ncol) memcpy(row + 3 * x, use_rgb + 3 * idx, 3);
+					else memset(row + 3 * x, 255, 3);
+					x++;
+				}
 				if (x == fw) {
 					x = 0;
 					if (whole) pmimg_sink_row(sink, row);
@@ -211,7 +226,7 @@ int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *err
 							il_y += il_step[pass];
 							while (il_y >= fh && pass < 3) { pass++; il_y = il_start[pass]; }
 						}
-						if (yy < fh) memcpy(full + (long)(fy + yy) * sw + fx, row, fw);
+						if (yy < fh) memcpy(full + ((long)(fy + yy) * sw + fx) * px, row, (long)fw * px);
 					}
 					y++;
 					if ((y & 15) == 0 && pmimg_sink_abort(sink)) { r = PMIMG_E_ABORTED; pmimg_err(err, errmax, "stopped"); goto done; }

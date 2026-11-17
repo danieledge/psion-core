@@ -7,6 +7,11 @@
  * looks (the grey calibration, ssh/psigrey.h). The nearest level is taken
  * and the error diffused is v - levels[q], so the picture's average
  * lightness is kept on the screen as it really is.
+ *
+ * In colour (opts->colour) the sink takes rows of red, green and blue,
+ * shrinks them the same way and diffuses the error in each channel to
+ * EPOC's 256 colours (pmimg_epoc256), the nearest found exactly from five
+ * candidates (sink_nearest). The grey path is not touched by it.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,6 +125,90 @@ unsigned int pmimg_in_le16(PmImgIn *in)
 	return (unsigned int)(a | (b << 8));
 }
 
+/* ------------------------------------------------- EPOC's 256 colours */
+
+/* The palette: index i < 108 or >= 148 is the cube (c = i, or i - 40 for
+   the second half; red c % 6, green c / 6 % 6, blue c / 36, in steps of
+   51); 108..147 are the ramps of the steps the cube has not (17k, k not a
+   multiple of 3): grey, red, green, blue 0x11..0x77, then blue, green,
+   red, grey 0x88..0xee. Made once, at the first use. */
+static unsigned char epoc_rgb[768];
+static unsigned char epoc_cube[216];     /* cube (r, g, b steps 0..5) -> index */
+static unsigned char epoc_ramp[4][16];   /* grey, red, green, blue; step 0..15 -> index */
+static int epoc_made;
+
+static void epoc_make(void)
+{
+	static const unsigned char lo[5] = { 1, 2, 4, 5, 7 }, hi[5] = { 8, 10, 11, 13, 14 };
+	int i, k, c;
+	for (i = 0; i < 256; i++) {
+		int r, g, b;
+		if (i < 108 || i >= 148) {
+			c = i < 108 ? i : i - 40;
+			r = c % 6 * 51; g = c / 6 % 6 * 51; b = c / 36 * 51;
+			epoc_cube[(r / 51) + 6 * (g / 51) + 36 * (b / 51)] = (unsigned char)i;
+		} else {
+			int j = i - 108, set = j / 5, v = (set < 4 ? lo[j % 5] : hi[j % 5]) * 17;
+			/* the sets in order: grey, red, green, blue, blue, green, red, grey */
+			static const int which[8] = { 0, 1, 2, 3, 3, 2, 1, 0 };
+			int w = which[set];
+			r = (w == 0 || w == 1) ? v : 0;
+			g = (w == 0 || w == 2) ? v : 0;
+			b = (w == 0 || w == 3) ? v : 0;
+			epoc_ramp[w][v / 17] = (unsigned char)i;
+		}
+		epoc_rgb[3 * i] = (unsigned char)r;
+		epoc_rgb[3 * i + 1] = (unsigned char)g;
+		epoc_rgb[3 * i + 2] = (unsigned char)b;
+	}
+	/* the ramps' steps that are in the cube: its entries */
+	for (k = 0; k < 16; k += 3) {
+		int s = k / 3;
+		epoc_ramp[0][k] = epoc_cube[s + 6 * s + 36 * s];
+		epoc_ramp[1][k] = epoc_cube[s];
+		epoc_ramp[2][k] = epoc_cube[6 * s];
+		epoc_ramp[3][k] = epoc_cube[36 * s];
+	}
+	epoc_made = 1;
+}
+
+const unsigned char *pmimg_epoc256(void)
+{
+	if (!epoc_made) epoc_make();
+	return epoc_rgb;
+}
+
+/* the eye's weights for the distance (red 2, green 4, blue 3) */
+static long epoc_dist(int r, int g, int b, int i)
+{
+	long dr = r - epoc_rgb[3 * i], dg = g - epoc_rgb[3 * i + 1], db = b - epoc_rgb[3 * i + 2];
+	return 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+}
+
+/* the nearest of the 256 to (r, g, b), 0..255 each. The distance is a sum
+   over the channels, so the nearest in each part of the palette is found
+   directly: the cube (each channel's nearest step), the grey ramp (the
+   step nearest the weighted mean), each colour ramp (that channel's
+   step, the others 0); the nearest of those five is the nearest of all. */
+static int sink_nearest(int r, int g, int b)
+{
+	int c[5], k, best;
+	long bd;
+	int m = (2 * r + 4 * g + 3 * b + 4) / 9;
+	c[0] = epoc_cube[(r + 25) / 51 + 6 * ((g + 25) / 51) + 36 * ((b + 25) / 51)];
+	c[1] = epoc_ramp[0][(m + 8) / 17];
+	c[2] = epoc_ramp[1][(r + 8) / 17];
+	c[3] = epoc_ramp[2][(g + 8) / 17];
+	c[4] = epoc_ramp[3][(b + 8) / 17];
+	best = c[0];
+	bd = epoc_dist(r, g, b, best);
+	for (k = 1; k < 5; k++) {
+		long d = epoc_dist(r, g, b, c[k]);
+		if (d < bd) { bd = d; best = c[k]; }
+	}
+	return best;
+}
+
 /* ---------------------------------------------------------------- sink */
 
 struct PmImgSink
@@ -143,6 +232,7 @@ struct PmImgSink
 	void *abort_ctx;
 	int aborted;
 	int type;
+	int colour;              /* rows of red, green, blue; bits are palette indexes */
 	};
 
 /* the level tables: nearest level, and for the ordered dither the level at
@@ -188,7 +278,9 @@ PmImgSink *pmimg_sink_new(int src_w, int src_h, const PmImgOpts *from, int type,
 	s->f = f;
 	s->out_w = (src_w + f - 1) / f;
 	s->out_h = (src_h + f - 1) / f;
-	s->stride = ((s->out_w + 7) / 8) * 4;
+	s->colour = o.colour != 0;
+	s->stride = s->colour ? ((s->out_w + 3) / 4) * 4 : ((s->out_w + 7) / 8) * 4;
+	if (s->colour && !epoc_made) epoc_make();
 	s->dither = o.no_dither ? 0 : o.ordered ? 2 : 1;
 	sink_levels(s, o.levels);
 	s->abort = o.abort;
@@ -196,11 +288,15 @@ PmImgSink *pmimg_sink_new(int src_w, int src_h, const PmImgOpts *from, int type,
 	s->type = type;
 	n = (long)s->stride * s->out_h;
 	s->bits = (unsigned char *)malloc(n);
-	s->acc = (unsigned int *)calloc(s->out_w, sizeof(unsigned int));
-	s->err_cur = (int *)calloc(s->out_w + 2, sizeof(int));
-	s->err_next = (int *)calloc(s->out_w + 2, sizeof(int));
+	{
+		int k = s->colour ? 3 : 1;   /* (colour: three sums and errors a pixel) */
+		s->acc = (unsigned int *)calloc((size_t)s->out_w * k, sizeof(unsigned int));
+		s->err_cur = (int *)calloc((size_t)(s->out_w + 2) * k, sizeof(int));
+		s->err_next = (int *)calloc((size_t)(s->out_w + 2) * k, sizeof(int));
+	}
 	if (!s->bits || !s->acc || !s->err_cur || !s->err_next) { pmimg_sink_abandon(s); *err = PMIMG_E_MEMORY; return 0; }
-	memset(s->bits, 0xcc, n);        /* rows never fed show grey */
+	/* rows never fed show grey (colour: EPOC's 0xcccccc) */
+	memset(s->bits, s->colour ? epoc_cube[4 + 6 * 4 + 36 * 4] : 0xcc, n);
 	return s;
 }
 
@@ -224,6 +320,89 @@ int pmimg_sink_abort(PmImgSink *s)
 int pmimg_sink_rows_done(const PmImgSink *s)
 {
 	return s->src_rows;
+}
+
+int pmimg_sink_colour(const PmImgSink *s)
+{
+	return s->colour;
+}
+
+/* colour: a finished band, averaged, dithered to EPOC's palette, one byte
+   a pixel. Floyd-Steinberg, serpentine, as the grey one, in each channel,
+   the error being v minus the chosen colour's own value. */
+static void sink_flush_band_rgb(PmImgSink *s, const unsigned char *row)
+{
+	int x, c, ow = s->out_w, f = s->f, rows = s->band_rows;
+	unsigned char *dst;
+	int *ec = s->err_cur, *en = s->err_next, *t;
+	unsigned long rcp = 0, rcp_last = 0;
+	int lastw, step, x0;
+	int fwd[3] = { 0, 0, 0 }, dn1[3] = { 0, 0, 0 }, dn2[3] = { 0, 0, 0 };
+	if (!rows || s->out_rows >= s->out_h) return;
+	dst = s->bits + (long)s->out_rows * s->stride;
+	if (f > 1) {
+		lastw = s->src_w - (ow - 1) * f;
+		rcp = (1UL << 24) / (unsigned long)(rows * f);
+		rcp_last = (1UL << 24) / (unsigned long)(rows * lastw);
+	}
+	step = s->serp ? -1 : 1;
+	x0 = s->serp ? ow - 1 : 0;
+	for (x = x0; x >= 0 && x < ow; x += step) {
+		int v[3], q;
+		for (c = 0; c < 3; c++) {
+			int a;
+			if (f == 1) a = row[3 * x + c];
+			else a = (int)((s->acc[3 * x + c] * (x == ow - 1 ? rcp_last : rcp) + (1UL << 23)) >> 24);
+			if (s->dither) a += ec[3 * (x + 1) + c] + fwd[c];
+			if (a < 0) a = 0;
+			if (a > 255) a = 255;
+			v[c] = a;
+		}
+		q = sink_nearest(v[0], v[1], v[2]);
+		dst[x] = (unsigned char)q;
+		if (s->dither)
+			for (c = 0; c < 3; c++) {
+				int e = v[c] - epoc_rgb[3 * q + c], d = (e * 7) >> 4, e3 = (e * 3) >> 4, e5 = (e * 5) >> 4;
+				fwd[c] = d;
+				en[3 * (x + 1 - step) + c] = dn1[c] + e3;
+				dn1[c] = dn2[c] + e5;
+				dn2[c] = e - d - e3 - e5;
+			}
+	}
+	if (s->dither)
+		for (c = 0; c < 3; c++) en[3 * (x + 1 - step) + c] = dn1[c];
+	s->serp = !s->serp;
+	t = s->err_cur; s->err_cur = s->err_next; s->err_next = t;
+	memset(s->err_next, 0, (size_t)(ow + 2) * 3 * sizeof(int));
+	if (f > 1) memset(s->acc, 0, (size_t)ow * 3 * sizeof(unsigned int));
+	s->band_rows = 0;
+	s->out_rows++;
+}
+
+static void sink_row_rgb(PmImgSink *s, const unsigned char *row)
+{
+	int f = s->f, w = s->src_w, x, ox = 0, k = 0;
+	unsigned int *acc = s->acc;
+	if (s->src_rows >= s->src_h) return;
+	if (f == 1) {
+		s->src_rows++;
+		s->band_rows = 1;
+		sink_flush_band_rgb(s, row);
+		return;
+	}
+	{
+		unsigned int sr = 0, sg = 0, sb = 0;
+		for (x = 0; x < w; x++) {
+			sr += row[3 * x]; sg += row[3 * x + 1]; sb += row[3 * x + 2];
+			if (++k == f) {
+				acc[3 * ox] += sr; acc[3 * ox + 1] += sg; acc[3 * ox + 2] += sb;
+				ox++; sr = sg = sb = 0; k = 0;
+			}
+		}
+		if (k) { acc[3 * ox] += sr; acc[3 * ox + 1] += sg; acc[3 * ox + 2] += sb; }
+	}
+	s->src_rows++;
+	if (++s->band_rows == f || s->src_rows == s->src_h) sink_flush_band_rgb(s, 0);
 }
 
 /* a finished band: average, dither, pack one output row. With f == 1, row
@@ -304,6 +483,7 @@ void pmimg_sink_row(PmImgSink *s, const unsigned char *row)
 {
 	int f = s->f, w = s->src_w;
 	unsigned int *acc = s->acc;
+	if (s->colour) { sink_row_rgb(s, row); return; }
 	if (s->src_rows >= s->src_h) return;
 	if (f == 1) {
 		/* straight through: one source row is one output row */
@@ -332,12 +512,15 @@ void pmimg_sink_row(PmImgSink *s, const unsigned char *row)
 void pmimg_sink_all(PmImgSink *s, const unsigned char *rows)
 {
 	int y;
-	for (y = 0; y < s->src_h; y++) pmimg_sink_row(s, rows + (long)y * s->src_w);
+	for (y = 0; y < s->src_h; y++) pmimg_sink_row(s, rows + (long)y * s->src_w * (s->colour ? 3 : 1));
 }
 
 int pmimg_sink_end(PmImgSink *s, PmImage *out)
 {
-	if (s->band_rows) sink_flush_band(s, 0);
+	if (s->band_rows) {
+		if (s->colour) sink_flush_band_rgb(s, 0);
+		else sink_flush_band(s, 0);
+	}
 	out->w = s->out_w;
 	out->h = s->out_h;
 	out->src_w = s->src_w;
@@ -346,6 +529,7 @@ int pmimg_sink_end(PmImgSink *s, PmImage *out)
 	out->bits = s->bits;
 	out->type = s->type;
 	out->partial = s->src_rows < s->src_h;
+	out->colour = s->colour;
 	s->bits = 0;
 	pmimg_sink_abandon(s);
 	return PMIMG_OK;

@@ -19,6 +19,13 @@
  * left pixel of each byte in the low nibble, 0 black to 15 white, rows
  * padded to 32 bits - so a row can be copied into a CFbsBitmap as it is.
  *
+ * In colour (opts->colour, for the netBook's screen and the Atom modem's
+ * web proxy making pictures for it): the same shrink, then Floyd-Steinberg
+ * in red, green and blue to EPOC's fixed 256-colour palette (pmimg_epoc256),
+ * one byte a pixel, a palette index. Baseline JPEG, PNG and GIF only: a
+ * progressive JPEG is refused in colour (PMIMG_E_UNSUPPORTED), as its
+ * chroma is not kept. The 16-grey output is not changed by any of this.
+ *
  * Shared by PsiMail's engine (engine/pictures.c) and meant for PsiWeb too.
  * Nothing here depends on EPOC or on the rest of the engine.
  *
@@ -68,6 +75,8 @@ typedef struct
 	int exact;               /* 1: a JPEG is decoded at the smallest scale that still gives
 	                            max_w x max_h or more (the Atom modem, which has the time);
 	                            0: half of that is enough (the Psion: a quarter of the work) */
+	int colour;              /* 1: in colour, to EPOC's 256 colours (see above): bits are one
+	                            byte a pixel, a palette index; 0: 16 greys as always */
 	} PmImgOpts;
 
 typedef struct
@@ -78,6 +87,8 @@ typedef struct
 	unsigned char *bits;     /* stride * h bytes (pmimg_free) */
 	int type;                /* PMIMG_JPEG.. */
 	int partial;             /* 1: the data ran out; the rest is grey */
+	int colour;              /* 1: bits are palette indexes, one a pixel, rows padded to 32
+	                            bits (stride ((w + 3) / 4) * 4); 0: two greys a byte */
 	} PmImage;
 
 /* what the first bytes say it is (n >= 8 is enough) */
@@ -93,7 +104,12 @@ int pmimg_decode_file(const char *path, const PmImgOpts *opts, PmImage *out, cha
 int pmimg_decode_mem(const unsigned char *data, long len, const PmImgOpts *opts, PmImage *out, char *err, int errmax);
 void pmimg_free(PmImage *img);
 
-/* one pixel, 0..15 */
+/* EPOC R5's 256-colour palette (TRgb::Color256, the netBook's), as red,
+   green, blue for each index: a 6x6x6 cube in two halves with 16-step
+   ramps of grey, red, green and blue between them */
+extern const unsigned char *pmimg_epoc256(void);
+
+/* one pixel, 0..15 (16 greys) */
 #define PMIMG_PIXEL(img, x, y) (((img)->bits[(y) * (img)->stride + ((x) >> 1)] >> (((x) & 1) * 4)) & 15)
 
 /* tests: writes the result as a binary PGM (0 ok) */
@@ -104,8 +120,11 @@ int pmimg_write_pgm(const PmImage *img, const char *path);
 typedef struct PmImgSink PmImgSink;
 /* a source of src_w x src_h 8-bit grey rows; chooses the shrink factor */
 PmImgSink *pmimg_sink_new(int src_w, int src_h, const PmImgOpts *opts, int type, int *err);
-/* one source row, left to right, 0 black .. 255 white */
+/* one source row, left to right, 0 black .. 255 white; in colour, three
+   bytes a pixel (red, green, blue) */
 void pmimg_sink_row(PmImgSink *s, const unsigned char *row);
+/* 1 if the sink wants colour rows (opts->colour) */
+int  pmimg_sink_colour(const PmImgSink *s);
 /* the same picture, all at once (for interlaced formats) */
 void pmimg_sink_all(PmImgSink *s, const unsigned char *rows);
 int  pmimg_sink_rows_done(const PmImgSink *s);
