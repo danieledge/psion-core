@@ -24,6 +24,7 @@ email and the web. PsiProxy adds the rest.
 | Psion Internet (PPP) for the Psion's own programs | yes | yes | - |
 | PsiWeb: TLS done for the Psion, pages simplified, text-only and reader modes, gzip on the line | yes | yes | yes, with full slimming: articles in one column, home pages as lists of headlines, site menus folded into one link |
 | Pictures in 16 greys | JPEG, PNG and GIF up to 64 KB | the same | every format (WebP and AVIF too), any size, and PsiMail's web pictures |
+| Pictures in colour on the netBook (PsiWeb 0.83) | JPEG, PNG and GIF in EPOC's 256 colours up to 560 wide (AtomS3R, firmware 2.8); a JPEG that already fits is passed on; a big progressive JPEG in greys | the same | every format, as colour JPEGs up to 560 wide (a third of the bytes), tables kept, page limits (PsiProxy 1.01) |
 | Pages drawn by JavaScript | no | no | yes, if you turn on its headless browser |
 | PsiCast (the Psion's screen in a browser) | yes, with a USB keyboard on the Atom | yes (Type on phone on Linux) | - |
 | PsiLinux packages (Alpine's `apk`) | no | no | yes (PsiLinux's plug-in) |
