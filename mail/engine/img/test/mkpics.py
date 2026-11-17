@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """mkpics.py DIR - test pictures for pmimgtest (Pillow): a colour photo-like
-picture as baseline JPEG, progressive JPEG, PNG (and interlaced, and with
+picture as baseline JPEG, progressive JPEG (4:2:0, 4:4:4, with restarts,
+grey, CMYK), PNG (and interlaced, and with
 transparency) and GIF, and its mean colour in mean.txt."""
 import os
 import sys
@@ -19,6 +20,10 @@ for y in range(150, 250):
         px[x, y] = (230, 30, 30)
 im.save(os.path.join(out, "c.jpg"), quality=90)
 im.save(os.path.join(out, "cp.jpg"), quality=90, progressive=True)
+im.save(os.path.join(out, "cp444.jpg"), quality=90, progressive=True, subsampling=0)
+im.save(os.path.join(out, "cprst.jpg"), quality=90, progressive=True, restart_marker_blocks=5)
+im.convert("L").save(os.path.join(out, "cpg.jpg"), quality=90, progressive=True)
+im.convert("CMYK").save(os.path.join(out, "cpk.jpg"), quality=90, progressive=True)
 im.save(os.path.join(out, "c.png"))
 im.save(os.path.join(out, "ci.png"), interlace=1)
 a = im.convert("RGBA")

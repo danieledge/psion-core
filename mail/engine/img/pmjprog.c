@@ -1,4 +1,5 @@
-/* pmjprog.c - progressive JPEG (and extended sequential, SOF1) to 16 greys.
+/* pmjprog.c - progressive JPEG (and extended sequential, SOF1) to 16 greys
+ * (or, when asked, colour).
  *
  * picojpeg (pmjpeg.c) decodes baseline JPEGs one MCU at a time and refuses
  * progressive ones, whose coefficients arrive over several scans (the DC
@@ -24,6 +25,14 @@
  * stb_image's; zero columns take a short cut), cut down to its 8, 4, 2 or 1
  * pixels across, and the rows go to the same sink as the other decoders
  * (shrink to fit, Floyd-Steinberg to 16 greys).
+ *
+ * In colour with opts->prog_colour (PsiMail on the netBook), every
+ * component is kept the same way, not the luma alone (4:2:0 costs half as
+ * much again; the shrink grows to stay within max_full_bytes), and the
+ * output goes a row of MCUs at a time: the chroma stretched to the luma's
+ * size, YCbCr to red, green and blue, rows of three bytes a pixel to the
+ * sink. A grey JPEG gives grey rows; CMYK is refused. In greys nothing of
+ * this runs, and the result is byte for byte what it was.
  *
  * Hostile input: every count and index is checked against the frame
  * before use, Huffman tables are validated, coefficient values are
@@ -87,13 +96,15 @@ typedef struct
 	int qok[4];
 	Huff dc[4], ac[4];
 	int ri;                  /* restart interval, 0 none */
-	/* the luma's coefficients */
+	/* the coefficients kept: the luma's alone, or (in colour) every component's */
 	int ycomp;               /* index of the luma in c[] */
+	int colour;              /* 1: all three components kept, rows to the sink in colour */
 	int keep;                /* coefficients kept a block (zigzag order): 1, 5, 25 or 64 */
 	int masks;               /* 1: a 64-bit "non-zero" mask a block as well */
-	int ybw, ybh;            /* blocks stored: padded to whole MCUs */
-	short *coef;             /* ybw * ybh * keep */
-	unsigned long *mask;     /* ybw * ybh * 2 */
+	int store[MAXC];         /* 1: this component's coefficients are kept */
+	int cbw[MAXC], cbh[MAXC];   /* blocks stored: padded to whole MCUs */
+	short *coef[MAXC];       /* cbw * cbh * keep (0 when not kept) */
+	unsigned long *mask[MAXC];  /* cbw * cbh * 2 */
 	int shrink;
 	int eobrun;
 	int scans, scans_done, eoi;
@@ -273,7 +284,9 @@ static int keep_for(int shrink) { return shrink >= 3 ? 1 : shrink == 2 ? 5 : shr
 
 static long bytes_for(const Dec *d, int keep)
 {
-	long blocks = (long)d->ybw * d->ybh;
+	long blocks = 0;
+	int i;
+	for (i = 0; i < d->ncomp; i++) if (d->store[i]) blocks += (long)d->cbw[i] * d->cbh[i];
 	return blocks * (keep * 2 + (keep > 1 && keep < 64 ? 8 : 0));
 }
 
@@ -281,13 +294,23 @@ static int setup(Dec *d, char *err, int errmax)
 {
 	const Comp *y = &d->c[d->ycomp];
 	long need;
-	int shrink, sw, sh, e;
+	int shrink, sw, sh, e, i;
 	if ((long)d->w * d->h > d->o->max_src_pixels || d->w > PMIMG_MAX_DIM || d->h > PMIMG_MAX_DIM) {
 		pmimg_err(err, errmax, "too big");
 		return PMIMG_E_TOO_BIG;
 	}
-	d->ybw = d->ncomp > 1 ? d->mcux * y->h : y->bw;
-	d->ybh = d->ncomp > 1 ? d->mcuy * y->v : y->bh;
+	/* (colour: a grey JPEG's one component, or YCbCr's three; CMYK is not taken) */
+	d->colour = d->o->colour != 0;
+	if (d->colour && d->ncomp != 1 && d->ncomp != 3) {
+		pmimg_err(err, errmax, "a JPEG of a kind not supported in colour");
+		return PMIMG_E_UNSUPPORTED;
+	}
+	for (i = 0; i < d->ncomp; i++) {
+		const Comp *c = &d->c[i];
+		d->store[i] = d->colour || i == d->ycomp;
+		d->cbw[i] = d->ncomp > 1 ? d->mcux * c->h : c->bw;
+		d->cbh[i] = d->ncomp > 1 ? d->mcuy * c->v : c->bh;
+	}
 	/* the shrink pmjpeg.c would use; more if the memory says so */
 	for (shrink = 3; shrink > 0; shrink--)
 		if ((d->w >> shrink) >= (d->o->exact ? d->o->max_w : d->o->max_w / 2)
@@ -298,34 +321,43 @@ static int setup(Dec *d, char *err, int errmax)
 	d->shrink = shrink;
 	d->keep = keep_for(shrink);
 	d->masks = d->keep > 1 && d->keep < 64;
-	d->coef = (short *)calloc((size_t)d->ybw * d->ybh, (size_t)d->keep * sizeof(short));
-	if (d->masks) d->mask = (unsigned long *)calloc((size_t)d->ybw * d->ybh, 2 * sizeof(unsigned long));
-	if (!d->coef || (d->masks && !d->mask)) { pmimg_err(err, errmax, "not enough memory"); return PMIMG_E_MEMORY; }
-	/* the luma's own size at this shrink (it may be smaller than the
-	   picture if it is subsampled, which is rare) */
-	sw = ((d->w * y->h + d->hmax - 1) / d->hmax + (1 << shrink) - 1) >> shrink;
-	sh = ((d->h * y->v + d->vmax - 1) / d->vmax + (1 << shrink) - 1) >> shrink;
+	for (i = 0; i < d->ncomp; i++) {
+		if (!d->store[i]) continue;
+		d->coef[i] = (short *)calloc((size_t)d->cbw[i] * d->cbh[i], (size_t)d->keep * sizeof(short));
+		if (d->masks) d->mask[i] = (unsigned long *)calloc((size_t)d->cbw[i] * d->cbh[i], 2 * sizeof(unsigned long));
+		if (!d->coef[i] || (d->masks && !d->mask[i])) { pmimg_err(err, errmax, "not enough memory"); return PMIMG_E_MEMORY; }
+	}
+	if (d->colour) {
+		/* the picture's size at this shrink (the chroma is stretched to it) */
+		sw = (d->w + (1 << shrink) - 1) >> shrink;
+		sh = (d->h + (1 << shrink) - 1) >> shrink;
+	} else {
+		/* the luma's own size at this shrink (it may be smaller than the
+		   picture if it is subsampled, which is rare) */
+		sw = ((d->w * y->h + d->hmax - 1) / d->hmax + (1 << shrink) - 1) >> shrink;
+		sh = ((d->h * y->v + d->vmax - 1) / d->vmax + (1 << shrink) - 1) >> shrink;
+	}
 	d->sink = pmimg_sink_new(sw, sh, d->o, PMIMG_JPEG, &e);
 	if (!d->sink) { pmimg_err(err, errmax, e == PMIMG_E_TOO_BIG ? "too big" : "not enough memory"); return e; }
 	return PMIMG_OK;
 }
 
-/* coefficient k (zigzag) of luma block (bx, by): its value, or for one not
-   stored, whether it is non-zero (as 1) */
-static int coef_get(Dec *d, int blk, int k)
+/* coefficient k (zigzag) of component ci's block blk: its value, or for
+   one not stored, whether it is non-zero (as 1) */
+static int coef_get(Dec *d, int ci, int blk, int k)
 {
-	if (k < d->keep) return d->coef[(long)blk * d->keep + k];
+	if (k < d->keep) return d->coef[ci][(long)blk * d->keep + k];
 	if (!d->masks) return 0;
-	return (int)((d->mask[(long)blk * 2 + (k >> 5)] >> (k & 31)) & 1);
+	return (int)((d->mask[ci][(long)blk * 2 + (k >> 5)] >> (k & 31)) & 1);
 }
 
-static void coef_set(Dec *d, int blk, int k, int v)
+static void coef_set(Dec *d, int ci, int blk, int k, int v)
 {
 	if (k < d->keep) {
 		if (v > 32767) v = 32767;
 		if (v < -32768) v = -32768;
-		d->coef[(long)blk * d->keep + k] = (short)v;
-	} else if (d->masks && v) d->mask[(long)blk * 2 + (k >> 5)] |= 1UL << (k & 31);
+		d->coef[ci][(long)blk * d->keep + k] = (short)v;
+	} else if (d->masks && v) d->mask[ci][(long)blk * 2 + (k >> 5)] |= 1UL << (k & 31);
 }
 
 /* ------------------------------------------------------------ scans */
@@ -342,11 +374,11 @@ static void block_dc(Dec *d, Bits *b, const Scan *s, int ci, int blk)
 		c->pred += diff;
 		if (c->pred > 32767) c->pred = 32767;
 		if (c->pred < -32768) c->pred = -32768;
-		if (blk >= 0) coef_set(d, blk, 0, c->pred * (1 << s->al));
+		if (blk >= 0) coef_set(d, ci, blk, 0, c->pred * (1 << s->al));
 	} else {
 		if (get_bit(b) && blk >= 0 && d->keep > 0) {
-			int v = coef_get(d, blk, 0);
-			coef_set(d, blk, 0, v | (1 << s->al));
+			int v = coef_get(d, ci, blk, 0);
+			coef_set(d, ci, blk, 0, v | (1 << s->al));
 		}
 	}
 }
@@ -355,7 +387,7 @@ static void block_dc(Dec *d, Bits *b, const Scan *s, int ci, int blk)
 static void block_ac_first(Dec *d, Bits *b, const Scan *s, int blk)
 {
 	const Huff *t = &d->ac[d->c[s->idx[0]].ac_tbl];
-	int k;
+	int k, ci = s->idx[0];
 	if (d->eobrun > 0) { d->eobrun--; return; }
 	for (k = s->ss; k <= s->se; k++) {
 		int rs = decode(b, t), r, sz;
@@ -372,7 +404,7 @@ static void block_ac_first(Dec *d, Bits *b, const Scan *s, int blk)
 		}
 		k += r;
 		if (k > 63) return;
-		coef_set(d, blk, k, extend(get_bits(b, sz), sz) * (1 << s->al));
+		coef_set(d, ci, blk, k, extend(get_bits(b, sz), sz) * (1 << s->al));
 	}
 }
 
@@ -382,7 +414,7 @@ static void block_ac_refine(Dec *d, Bits *b, const Scan *s, int blk)
 {
 	const Huff *t = &d->ac[d->c[s->idx[0]].ac_tbl];
 	int p1 = 1 << s->al, m1 = -(1 << s->al);
-	int k = s->ss;
+	int k = s->ss, ci = s->idx[0];
 	if (d->eobrun <= 0) {
 		for (; k <= s->se; k++) {
 			int rs = decode(b, t), r, sz, v = 0;
@@ -396,23 +428,23 @@ static void block_ac_refine(Dec *d, Bits *b, const Scan *s, int blk)
 				break;
 			}
 			while (k <= s->se) {
-				int cur = coef_get(d, blk, k);
+				int cur = coef_get(d, ci, blk, k);
 				if (cur != 0) {
 					if (get_bit(b) && k < d->keep && (cur & p1) == 0)
-						coef_set(d, blk, k, cur >= 0 ? cur + p1 : cur + m1);
+						coef_set(d, ci, blk, k, cur >= 0 ? cur + p1 : cur + m1);
 				} else {
 					if (--r < 0) break;
 				}
 				k++;
 			}
-			if (v && k <= s->se) coef_set(d, blk, k, v);
+			if (v && k <= s->se) coef_set(d, ci, blk, k, v);
 		}
 	}
 	if (d->eobrun > 0) {
 		for (; k <= s->se; k++) {
-			int cur = coef_get(d, blk, k);
+			int cur = coef_get(d, ci, blk, k);
 			if (cur != 0 && get_bit(b) && k < d->keep && (cur & p1) == 0)
-				coef_set(d, blk, k, cur >= 0 ? cur + p1 : cur + m1);
+				coef_set(d, ci, blk, k, cur >= 0 ? cur + p1 : cur + m1);
 		}
 		d->eobrun--;
 	}
@@ -438,7 +470,7 @@ static void block_seq(Dec *d, Bits *b, const Scan *s, int ci, int blk)
 		if (k > 63) return;
 		{
 			int v = extend(get_bits(b, sz), sz);
-			if (blk >= 0) coef_set(d, blk, k, v);
+			if (blk >= 0) coef_set(d, ci, blk, k, v);
 		}
 	}
 }
@@ -478,7 +510,7 @@ static int decode_scan(Dec *d, const Scan *s)
 		rows = c->bh;
 		for (my = 0; my < c->bh; my++) {
 			for (mx = 0; mx < c->bw; mx++) {
-				int blk = ci == d->ycomp && my < d->ybh && mx < d->ybw ? my * d->ybw + mx : -1;
+				int blk = d->store[ci] && my < d->cbh[ci] && mx < d->cbw[ci] ? my * d->cbw[ci] + mx : -1;
 				if (d->ri && n && n % d->ri == 0 && !restart(d, &b, s)) goto done;
 				n++;
 				if (!d->progressive)
@@ -504,7 +536,7 @@ static int decode_scan(Dec *d, const Scan *s)
 					for (v = 0; v < c->v; v++)
 						for (u = 0; u < c->h; u++) {
 							int bx = mx * c->h + u, by = my * c->v + v;
-							int blk = ci == d->ycomp && by < d->ybh && bx < d->ybw ? by * d->ybw + bx : -1;
+							int blk = d->store[ci] && by < d->cbh[ci] && bx < d->cbw[ci] ? by * d->cbw[ci] + bx : -1;
 							if (!d->progressive) block_seq(d, &b, s, ci, blk);
 							else block_dc(d, &b, s, ci, blk);
 						}
@@ -580,51 +612,127 @@ static void idct8(const int *in, unsigned char *out)
 	}
 }
 
+/* component ci's block blk as bs x bs pixels at dst (rows bw apart) */
+static void block_pixels(Dec *d, int ci, int blk, unsigned char *dst, int bw)
+{
+	const unsigned short *q = d->q[d->c[ci].tq];
+	const short *c = d->coef[ci] + (long)blk * d->keep;
+	int bs = 8 >> d->shrink, r, k;
+	unsigned char px[64];
+	int in[64];
+	if (d->keep == 1) {
+		/* DC alone: the block's average, no transform */
+		int v = clampv(c[0] * (int)q[0], 2047);
+		dst[0] = clamp255(((v + 4) >> 3) + 128);
+		return;
+	}
+	for (k = 0; k < 64; k++) in[k] = 0;
+	for (k = 0; k < d->keep; k++)
+		if (c[k]) in[zz[k]] = clampv(c[k] * (int)q[zz[k]], 2047);
+	idct8(in, px);
+	if (bs == 8) {
+		for (r = 0; r < 8; r++) memcpy(dst + (long)r * bw, px + r * 8, 8);
+	} else {
+		/* the block shrunk to bs x bs by averaging */
+		int f2 = 8 / bs, u, v, i, j;
+		for (v = 0; v < bs; v++)
+			for (u = 0; u < bs; u++) {
+				int sum = 0;
+				for (j = 0; j < f2; j++)
+					for (i = 0; i < f2; i++) sum += px[(v * f2 + j) * 8 + u * f2 + i];
+				dst[(long)v * bw + u] = (unsigned char)(sum / (f2 * f2));
+			}
+	}
+}
+
 static int output(Dec *d, PmImage *out, char *err, int errmax)
 {
 	const Comp *y = &d->c[d->ycomp];
-	const unsigned short *q = d->q[y->tq];
 	int bs = 8 >> d->shrink, f = 1 << d->shrink;
 	int sw = ((d->w * y->h + d->hmax - 1) / d->hmax + f - 1) >> d->shrink;
 	int sh = ((d->h * y->v + d->vmax - 1) / d->vmax + f - 1) >> d->shrink;
-	int bw = d->ybw * bs, by, bx, r, k;
-	unsigned char *band = (unsigned char *)malloc((size_t)bw * bs), px[64];
-	int in[64];
+	int ybw = d->cbw[d->ycomp], ybh = d->cbh[d->ycomp];
+	int bw = ybw * bs, by, bx, r;
+	unsigned char *band = (unsigned char *)malloc((size_t)bw * bs);
 	if (!band) { pmimg_err(err, errmax, "not enough memory"); return PMIMG_E_MEMORY; }
-	for (by = 0; by < d->ybh && by * bs < sh; by++) {
-		for (bx = 0; bx < d->ybw; bx++) {
-			int blk = by * d->ybw + bx;
-			const short *c = d->coef + (long)blk * d->keep;
-			unsigned char *dst = band + bx * bs;
-			if (d->keep == 1) {
-				/* DC alone: the block's average, no transform */
-				int v = clampv(c[0] * (int)q[0], 2047);
-				dst[0] = clamp255(((v + 4) >> 3) + 128);
-				continue;
-			}
-			for (k = 0; k < 64; k++) in[k] = 0;
-			for (k = 0; k < d->keep; k++)
-				if (c[k]) in[zz[k]] = clampv(c[k] * (int)q[zz[k]], 2047);
-			idct8(in, px);
-			if (bs == 8) {
-				for (r = 0; r < 8; r++) memcpy(dst + (long)r * bw, px + r * 8, 8);
-			} else {
-				/* the block shrunk to bs x bs by averaging */
-				int f2 = 8 / bs, u, v, i, j;
-				for (v = 0; v < bs; v++)
-					for (u = 0; u < bs; u++) {
-						int sum = 0;
-						for (j = 0; j < f2; j++)
-							for (i = 0; i < f2; i++) sum += px[(v * f2 + j) * 8 + u * f2 + i];
-						dst[(long)v * bw + u] = (unsigned char)(sum / (f2 * f2));
-					}
-			}
-		}
+	for (by = 0; by < ybh && by * bs < sh; by++) {
+		for (bx = 0; bx < ybw; bx++)
+			block_pixels(d, d->ycomp, by * ybw + bx, band + bx * bs, bw);
 		for (r = 0; r < bs && by * bs + r < sh; r++) pmimg_sink_row(d->sink, band + (long)r * bw);
 		if ((by & 7) == 7 && pmimg_sink_abort(d->sink)) { free(band); d->aborted = 1; pmimg_err(err, errmax, "stopped"); return PMIMG_E_ABORTED; }
 	}
 	free(band);
 	(void)sw;
+	return PMIMG_OK;
+}
+
+/* (colour) a row of MCUs at a time: each component's blocks to pixels,
+   the chroma stretched to the luma's size (nearest pixel), YCbCr to red,
+   green and blue as JFIF has it (16-bit fixed point), the rows to the sink */
+static int output_colour(Dec *d, PmImage *out, char *err, int errmax)
+{
+	int bs = 8 >> d->shrink, f = 1 << d->shrink;
+	int sw = (d->w + f - 1) >> d->shrink, sh = (d->h + f - 1) >> d->shrink;
+	int n = d->ncomp, mrows = d->ncomp > 1 ? d->vmax * bs : bs, my, i, r, x, bx, bv;
+	int mcuy = d->ncomp > 1 ? d->mcuy : d->cbh[0];
+	unsigned char *plane[MAXC], *rgb;
+	int pw[MAXC], ph[MAXC], *xmap[MAXC], ok = 1;
+	(void)out;
+	for (i = 0; i < MAXC; i++) { plane[i] = 0; xmap[i] = 0; }
+	rgb = (unsigned char *)malloc((size_t)sw * 3);
+	for (i = 0; i < n; i++) {
+		const Comp *c = &d->c[i];
+		pw[i] = d->cbw[i] * bs;
+		ph[i] = (d->ncomp > 1 ? c->v : 1) * bs;
+		plane[i] = (unsigned char *)malloc((size_t)pw[i] * ph[i]);
+		xmap[i] = (int *)malloc((size_t)sw * sizeof(int));
+		if (!plane[i] || !xmap[i]) { ok = 0; break; }
+		for (x = 0; x < sw; x++) {
+			int px = n > 1 ? x * c->h / d->hmax : x;
+			xmap[i][x] = px < pw[i] ? px : pw[i] - 1;
+		}
+	}
+	if (!rgb || !ok) {
+		for (i = 0; i < MAXC; i++) { free(plane[i]); free(xmap[i]); }
+		free(rgb);
+		pmimg_err(err, errmax, "not enough memory");
+		return PMIMG_E_MEMORY;
+	}
+	for (my = 0; my < mcuy && my * mrows < sh; my++) {
+		for (i = 0; i < n; i++) {
+			int cv = d->ncomp > 1 ? d->c[i].v : 1;
+			for (bv = 0; bv < cv; bv++) {
+				int brow = my * cv + bv;
+				for (bx = 0; bx < d->cbw[i]; bx++)
+					if (brow < d->cbh[i]) block_pixels(d, i, brow * d->cbw[i] + bx, plane[i] + (long)bv * bs * pw[i] + bx * bs, pw[i]);
+			}
+		}
+		for (r = 0; r < mrows && my * mrows + r < sh; r++) {
+			const unsigned char *yr, *cbr = 0, *crr = 0;
+			int ry = n > 1 ? r * d->c[0].v / d->vmax : r;
+			yr = plane[0] + (long)(ry < ph[0] ? ry : ph[0] - 1) * pw[0];
+			if (n == 3) {
+				int r1 = r * d->c[1].v / d->vmax, r2 = r * d->c[2].v / d->vmax;
+				cbr = plane[1] + (long)(r1 < ph[1] ? r1 : ph[1] - 1) * pw[1];
+				crr = plane[2] + (long)(r2 < ph[2] ? r2 : ph[2] - 1) * pw[2];
+			}
+			for (x = 0; x < sw; x++) {
+				int Y = yr[xmap[0][x]];
+				unsigned char *o = rgb + x * 3;
+				if (n == 3) {
+					int cb = cbr[xmap[1][x]] - 128, cr = crr[xmap[2][x]] - 128;
+					o[0] = clamp255(Y + ((91881 * cr + 32768) >> 16));
+					o[1] = clamp255(Y - ((22554 * cb + 46802 * cr - 32768) >> 16));
+					o[2] = clamp255(Y + ((116130 * cb + 32768) >> 16));
+				} else o[0] = o[1] = o[2] = (unsigned char)Y;
+			}
+			pmimg_sink_row(d->sink, rgb);
+		}
+		if ((my & 3) == 3 && pmimg_sink_abort(d->sink)) { ok = 0; break; }
+	}
+	for (i = 0; i < MAXC; i++) { free(plane[i]); free(xmap[i]); }
+	free(rgb);
+	if (!ok) { d->aborted = 1; pmimg_err(err, errmax, "stopped"); return PMIMG_E_ABORTED; }
 	return PMIMG_OK;
 }
 
@@ -713,8 +821,9 @@ int pmimg_decode_jpeg_prog(PmImgIn *in, const PmImgOpts *from, PmImage *out, cha
 			d->scans++;
 			{
 				int y = 0, skip;
-				for (i = 0; ok && i < s.ns; i++) if (s.idx[i] == d->ycomp) y = 1;
-				/* not the luma's, or AC terms we don't keep: skipped over */
+				for (i = 0; ok && i < s.ns; i++) if (d->store[s.idx[i]]) y = 1;
+				/* not a component kept (in greys, all but the luma), or AC
+				   terms we don't keep: skipped over */
 				skip = !ok || (s.ns == 1 && !y) || (d->progressive && s.ss > 0 && d->keep == 1);
 				if (skip) {
 					/* to the next marker that isn't a restart */
@@ -747,7 +856,7 @@ out_of_data:
 finish:
 	if (!have_frame || !d->sink) { r = PMIMG_E_FORMAT; pmimg_err(err, errmax, "a damaged JPEG"); goto end; }
 	if (!d->scans_done) { r = in->err ? PMIMG_E_READ : PMIMG_E_FORMAT; pmimg_err(err, errmax, in->err ? "could not read the file" : "a damaged JPEG"); goto end; }
-	r = output(d, out, err, errmax);
+	r = d->colour ? output_colour(d, out, err, errmax) : output(d, out, err, errmax);
 	if (r != PMIMG_OK) goto end;
 	r = pmimg_sink_end(d->sink, out);
 	d->sink = 0;
@@ -756,8 +865,10 @@ finish:
 	if (!d->eoi) out->partial = 1;
 end:
 	if (d->sink) pmimg_sink_abandon(d->sink);
-	free(d->coef);
-	free(d->mask);
+	{
+		int i;
+		for (i = 0; i < MAXC; i++) { free(d->coef[i]); free(d->mask[i]); }
+	}
 	free(d);
 	return r;
 }

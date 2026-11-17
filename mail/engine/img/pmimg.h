@@ -22,9 +22,11 @@
  * In colour (opts->colour, for the netBook's screen and the Atom modem's
  * web proxy making pictures for it): the same shrink, then Floyd-Steinberg
  * in red, green and blue to EPOC's fixed 256-colour palette (pmimg_epoc256),
- * one byte a pixel, a palette index. Baseline JPEG, PNG and GIF only: a
- * progressive JPEG is refused in colour (PMIMG_E_UNSUPPORTED), as its
- * chroma is not kept. The 16-grey output is not changed by any of this.
+ * one byte a pixel, a palette index. Baseline JPEG, PNG and GIF; a
+ * progressive JPEG is refused in colour (PMIMG_E_UNSUPPORTED) unless
+ * opts->prog_colour is set, when pmjprog.c keeps the chroma's coefficients
+ * as well as the luma's (half as much again for 4:2:0, within
+ * max_full_bytes). The 16-grey output is not changed by any of this.
  *
  * Shared by PsiMail's engine (engine/pictures.c) and meant for PsiWeb too.
  * Nothing here depends on EPOC or on the rest of the engine.
@@ -77,6 +79,8 @@ typedef struct
 	                            0: half of that is enough (the Psion: a quarter of the work) */
 	int colour;              /* 1: in colour, to EPOC's 256 colours (see above): bits are one
 	                            byte a pixel, a palette index; 0: 16 greys as always */
+	int prog_colour;         /* 1 (with colour): a progressive JPEG in colour too (PsiMail on
+	                            the netBook); 0: refused in colour, as before */
 	} PmImgOpts;
 
 typedef struct

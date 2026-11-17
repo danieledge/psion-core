@@ -22,7 +22,8 @@
  * green and blue go to the sink; the half and quarter shrinks are luma-only
  * in picojpeg, so a colour picture is decoded whole or at 1/8 (reduce
  * mode, which gives each block's colour), and the sink does the rest. A
- * progressive JPEG is refused in colour (pmjprog.c keeps the luma alone).
+ * progressive JPEG is refused in colour unless opts->prog_colour asks for
+ * it: then pmjprog.c keeps the chroma's coefficients too.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,9 +105,9 @@ int pmimg_decode_jpeg(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *er
 	pjpeg_grey_only(o.colour ? 0 : 1);
 	pjpeg_set_shrink(0);
 	status = pjpeg_decode_init(&info, need_bytes, in, 0);
-	if (status && o.colour && (status == PJPG_UNSUPPORTED_MODE || status == PJPG_UNSUPPORTED_MARKER ||
+	if (status && o.colour && !o.prog_colour && (status == PJPG_UNSUPPORTED_MODE || status == PJPG_UNSUPPORTED_MARKER ||
 	               status == PJPG_UNSUPPORTED_SAMP_FACTORS || status == PJPG_UNSUPPORTED_QUANT_TABLE)) {
-		/* progressive and the rest: pmjprog.c is luma only */
+		/* progressive and the rest: pmjprog.c keeps the chroma only when asked (prog_colour) */
 		pmimg_err(err, errmax, "a progressive JPEG (not in colour)");
 		return PMIMG_E_UNSUPPORTED;
 	}

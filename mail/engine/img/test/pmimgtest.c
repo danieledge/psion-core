@@ -1,6 +1,7 @@
 /* pmimgtest.c - pmimg in colour (opts->colour, EPOC's 256 colours): every
  * index valid, the palette EPOC's, the picture's mean colour kept, a
- * progressive JPEG refused; and the 16 greys still as they were for the
+ * progressive JPEG refused unless prog_colour asks, and then decoded in
+ * colour (fuzzed too); and the 16 greys still as they were for the
  * same pictures (sizes, two pixels a byte).
  *
  *   make -C mail/engine/img/test        (needs python3 with Pillow, zlib)
@@ -85,6 +86,65 @@ int main(int argc, char **argv)
 		o.colour = 0;
 		CHECK(pmimg_decode_file(path, &o, &im, err, sizeof(err)) == PMIMG_OK);
 		pmimg_free(&im);
+	}
+	/* (prog_colour) progressive JPEGs in colour: the mean colour kept as
+	   the baseline's is; a grey one in greys of the palette; CMYK refused;
+	   cut short or damaged, never a crash (the sanitizers watch) */
+	{
+		const char *pn[] = { "cp.jpg", "cp444.jpg", "cprst.jpg", "cpg.jpg", 0 };
+		static unsigned char data[1 << 20];
+		PmImgOpts o;
+		PmImage im;
+		char err[64];
+		int m[3], k, j;
+		long len;
+		for (i = 0; pn[i]; i++) {
+			memset(&o, 0, sizeof(o));
+			o.max_w = 300; o.max_h = 900; o.exact = 1; o.colour = 1; o.prog_colour = 1;
+			snprintf(path, sizeof(path), "%s/%s", dir, pn[i]);
+			CHECK(pmimg_decode_file(path, &o, &im, err, sizeof(err)) == PMIMG_OK);
+			CHECK(im.colour == 1 && im.w == 300 && im.h == 200 && im.stride == 300);
+			mean_rgb(&im, m);
+			printf("%-9s progressive colour %dx%d, mean %d %d %d\n", pn[i], im.w, im.h, m[0], m[1], m[2]);
+			if (strcmp(pn[i], "cpg.jpg")) { for (k = 0; k < 3; k++) CHECK(abs(m[k] - m0[k]) <= 10); }
+			else CHECK(abs(m[0] - m[1]) <= 6 && abs(m[1] - m[2]) <= 6);
+			pmimg_free(&im);
+			/* at 1/2, 1/4 and DC alone (the memory limit forcing it) */
+			for (k = 0; k < 3; k++) {
+				o.exact = 0; o.max_w = k == 0 ? 300 : 75; o.max_full_bytes = k == 2 ? 6000 : 0;
+				if (pmimg_decode_file(path, &o, &im, err, sizeof(err)) == PMIMG_OK) {
+					mean_rgb(&im, m);
+					if (strcmp(pn[i], "cpg.jpg")) for (j = 0; j < 3; j++) CHECK(abs(m[j] - m0[j]) <= 14);
+					pmimg_free(&im);
+				} else CHECK(k == 2);
+			}
+		}
+		memset(&o, 0, sizeof(o));
+		o.max_w = 300; o.colour = 1; o.prog_colour = 1;
+		snprintf(path, sizeof(path), "%s/cpk.jpg", dir);
+		CHECK(pmimg_decode_file(path, &o, &im, err, sizeof(err)) == PMIMG_E_UNSUPPORTED);
+		/* damaged: cut at many places, bytes changed */
+		snprintf(path, sizeof(path), "%s/cp.jpg", dir);
+		{
+			FILE *pf = fopen(path, "rb");
+			len = pf ? (long)fread(data, 1, sizeof(data), pf) : 0;
+			if (pf) fclose(pf);
+		}
+		CHECK(len > 1000);
+		srand(5);
+		for (k = 0; k < 200 && len > 1000; k++) {
+			static unsigned char bad[1 << 20];
+			long n = len, p;
+			memcpy(bad, data, len);
+			if (k % 2) n = 200 + rand() % (len - 200);
+			for (j = 0; j < 1 + k % 8; j++) { p = 2 + rand() % (len - 2); bad[p] = (unsigned char)rand(); }
+			memset(&o, 0, sizeof(o));
+			o.max_w = 120 + k; o.colour = 1; o.prog_colour = 1;
+			if (pmimg_decode_mem(bad, n, &o, &im, err, sizeof(err)) == PMIMG_OK) {
+				CHECK(im.w > 0 && im.w <= o.max_w);
+				pmimg_free(&im);
+			}
+		}
 	}
 	printf("%d checks, %d failed\n", checks, fails);
 	return fails != 0;
