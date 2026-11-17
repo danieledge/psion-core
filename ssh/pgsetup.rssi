@@ -1,0 +1,92 @@
+// pgsetup.rssi - the resources of the setup assistant (pgsetup.h): its two
+// shared pages, their choices and its buttons. A program includes this in
+// its .rss after its EIK_APP_INFO (a resource file's first resources must
+// stay its own), and builds its own DIALOG from the pages (it may add pages
+// of its own after them):
+//
+//   #define PGSU_TXT_HELPER_PROMPT "Web pictures are fetched by"   (optional)
+//   #include "pgsetup.rssi"
+//   RESOURCE DIALOG r_pm_setup_dialog
+//       {
+//       title="Set up PsiMail";
+//       flags=EEikDialogFlagWait;
+//       buttons=r_pgsu_buttons;
+//       pages=r_pm_setup_pages;
+//       }
+//   RESOURCE ARRAY r_pm_setup_pages
+//       {
+//       items=
+//           {
+//           PAGE { text="Connection"; id=EPgSuPageConn; lines=r_pgsu_conn_lines; },
+//           PAGE { text="Web helper"; id=EPgSuPageHelper; lines=r_pgsu_helper_lines; }
+//           };
+//       }
+//
+// The words of the choices are in psilink.rh; the annotations, which change
+// with the choice, are in pgsetup.cpp (a label's resource text is only the
+// longest of them, so the dialog is the same size whatever is chosen).
+#include "psilink.rh"
+#include "pgsetup.hrh"
+
+#ifndef PGSU_TXT_HELPER_PROMPT
+#define PGSU_TXT_HELPER_PROMPT "Pages are fetched by"
+#endif
+
+RESOURCE ARRAY r_pgsu_conn_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="This Psion goes online by"; id=EPgSuDlgConn;
+			control=CHOICELIST { maxdisplaychar=16; array_id=r_pgsu_conn_array; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgConnNote; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			horiz_align=EEikLabelAlignHLeft; reserve_length=72;
+			txt="The PsiConnect Atom on the serial cable - the Remote link must be off"; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Speed (modems only)"; id=EPgSuDlgBaud;
+			control=CHOICELIST { maxdisplaychar=8; array_id=r_pgsu_baud_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pgsu_helper_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt=PGSU_TXT_HELPER_PROMPT; id=EPgSuDlgHelper;
+			control=CHOICELIST { maxdisplaychar=16; array_id=r_pgsu_helper_array; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgHelperNote; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			horiz_align=EEikLabelAlignHLeft; reserve_length=72;
+			txt="Set PsiProxy's address in the modem (AT$PU) - nothing to set here"; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="PsiProxy's address"; id=EPgSuDlgHost;
+			control=EDWIN { width=18; maxlength=60; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPgSuDlgPort;
+			control=NUMBER_EDITOR { min=1; max=65535; }; }
+		};
+	}
+
+// in the order of PG_SU_CONN_*
+RESOURCE ARRAY r_pgsu_conn_array
+	{
+	items={ LBUF { txt="Network card or dial-up"; }, LBUF { txt="Atom modem"; }, LBUF { txt="Other WiFi modem"; } };
+	}
+
+// in the order of PG_SU_HELPER_*
+RESOURCE ARRAY r_pgsu_helper_array
+	{
+	items={ LBUF { txt=PSILINK_TXT_DIRECT; }, LBUF { txt=PSILINK_TXT_ATOM_HELPER; }, LBUF { txt=PSILINK_TXT_PSIPROXY; } };
+	}
+
+RESOURCE ARRAY r_pgsu_baud_array
+	{
+	items={ LBUF { txt="9600"; }, LBUF { txt="19200"; }, LBUF { txt="38400"; }, LBUF { txt="57600"; }, LBUF { txt="115200"; } };
+	}
+
+// Test (Ctrl+T) tries the settings shown, before OK, in the program's own
+// Test connection window; Cancel leaves every setting as it was
+RESOURCE DLG_BUTTONS r_pgsu_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPgSuBidTest; button=CMBUT { txt="Test"; }; hotkey='T'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}

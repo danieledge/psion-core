@@ -1,0 +1,36 @@
+// psilink.rh - the words of the shared connection settings (psilink.h), the
+// same in every program's Connection settings dialog and setup assistant.
+// Include it in the program's .rss (each .mmp has \ptproj\psitermssh as a
+// SYSTEMINCLUDE) and use the names below in place of the text, so the
+// routes are called the same everywhere. The settings underneath
+// (TPsiLink, PsiLink.ini) did not change with these words (17 Nov 2026).
+//
+// The three ways pages reach the Psion, in what the user reads:
+//   Direct                   the program fetches pages itself (no helper)
+//   Atom modem helper        the PsiConnect Atom fetches them (host "psiproxy")
+//   PsiProxy on a computer   PsiProxy on a computer at home (port 8081)
+// The word "proxy" is not used in what the user reads.
+#ifndef PSILINK_RH
+#define PSILINK_RH
+
+// Link > Connect via (TPsiLink::iNetMode: 0, 1)
+#define PSILINK_TXT_VIA_MODEM      "Modem (ATDT host:port)"
+#define PSILINK_TXT_VIA_NET        "Network card or dial-up (Psion TCP/IP)"
+// Link > the command sent to a serial modem before the Psion's dial-up (iPppStart)
+#define PSILINK_TXT_FIRST_SEND     "Dial-up: first send"
+// Network > after use (iKeepUp)
+#define PSILINK_TXT_AFTER_USE      "After use, Psion TCP/IP"
+// Network > the web helper (iUseProxy, iProxyHost, iProxyPort)
+#define PSILINK_TXT_HELPER         "Web helper"
+#define PSILINK_TXT_HELPER_NO      "None - direct"
+#define PSILINK_TXT_HELPER_YES     "Atom modem or PsiProxy"
+#define PSILINK_TXT_HELPER_HOST    "Helper's address"
+#define PSILINK_TXT_HELPER_PORT    "Helper's port"
+#define PSILINK_TXT_HELPER_NOTE    "Atom modem helper: psiproxy, port 8080 - PsiProxy on a computer: its address, 8081"
+
+// The route names (the setup assistant's choices, Help, About, Page information)
+#define PSILINK_TXT_DIRECT         "Direct"
+#define PSILINK_TXT_ATOM_HELPER    "Atom modem helper"
+#define PSILINK_TXT_PSIPROXY       "PsiProxy on a computer"
+
+#endif

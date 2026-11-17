@@ -2,7 +2,7 @@
 #   make -f test/Makefile.host test      build and run them all
 # Each one is a PC program; nothing here needs the EPOC SDK.
 
-all: linktest linkseentest psilinktest pgdevboxtest psiholdtest
+all: linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest
 
 # Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
 linktest: test/linktest.cpp psiglue.cpp pglinktest.h
@@ -25,14 +25,19 @@ pgdevboxtest: test/pgdevboxtest.c pgdevbox.h
 psiholdtest: test/psiholdtest.cpp psilink.h
 	g++ -Wall -O1 -g -fsanitize=address,undefined test/psiholdtest.cpp -o $@
 
+# The setup assistant's choices and what they write (pgsetup.h)
+setuptest: test/setuptest.cpp pgsetup.h pgsetup.hrh
+	g++ -Wall -Wextra -O1 -g -fsanitize=address,undefined -I . test/setuptest.cpp -o $@
+
 test: all
 	./linktest
 	./linkseentest
 	./psilinktest
 	./pgdevboxtest
 	./psiholdtest
+	./setuptest
 
 clean:
-	rm -f linktest linkseentest psilinktest pgdevboxtest psiholdtest
+	rm -f linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest
 
 .PHONY: all test clean

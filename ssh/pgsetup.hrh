@@ -1,0 +1,26 @@
+// pgsetup.hrh - the ids of the setup assistant (pgsetup.h), the same in
+// every program that carries it (PsiWeb, PsiMail; PsiTerm can). Included by
+// the program's .rss and by pgsetup.h. 0x7c00 to 0x7cff is this file's: no
+// program uses it for anything else.
+#ifndef PGSETUP_HRH
+#define PGSETUP_HRH
+
+enum TPgSetupControls
+	{
+	EPgSuDlgConn = 0x7c00,   // Connection: This Psion goes online by
+	EPgSuDlgConnNote,        //   ...the annotation under it
+	EPgSuDlgBaud,            //   Speed (modems only)
+	EPgSuDlgHelper,          // Web helper: Pages are fetched by
+	EPgSuDlgHelperNote,      //   ...the annotation under it
+	EPgSuDlgHost,            //   PsiProxy's address
+	EPgSuDlgPort,            //   Port
+	EPgSuBidTest = 0x7c40    // the Test button (Ctrl+T)
+	};
+
+enum TPgSetupPages
+	{
+	EPgSuPageConn = 0x7c80,
+	EPgSuPageHelper
+	};
+
+#endif
