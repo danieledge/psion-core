@@ -1182,15 +1182,18 @@ static CAgnRptDef* RptFromL(const CalRepeat& aR, const TTime& aStart)
 			end = TTime(TDateTime(y, TMonth(m - 1), d - 1, 0, 0, 0, 0));
 		}
 	TInt i, w;
+	// (the repeat's own interval too, as Agenda's dialogs set it: one left
+	// at 0 is a bad entry, Agenda Model panic 1)
+	TUint iv = aR.interval > 0 ? aR.interval : 1;
 	switch (aR.type)
 		{
 	case CR_DAILY:
-		{ TAgnDailyRpt x; x.SetStartDate(aStart); r->SetDaily(x); }
+		{ TAgnDailyRpt x; x.SetStartDate(aStart); x.SetInterval(iv); r->SetDaily(x); }
 		break;
 	case CR_WEEKLY:
 		{
 		TAgnWeeklyRpt x;
-		x.SetStartDate(aStart);
+		x.SetStartDate(aStart); x.SetInterval(iv);
 		for (i = 0; i < 7; i++) if (aR.weekdays & (1 << i)) x.SetDay((TDay)i);
 		r->SetWeekly(x);
 		}
@@ -1198,7 +1201,7 @@ static CAgnRptDef* RptFromL(const CalRepeat& aR, const TTime& aStart)
 	case CR_MONTHLY_DATES:
 		{
 		TAgnMonthlyByDatesRpt x;
-		x.SetStartDate(aStart);
+		x.SetStartDate(aStart); x.SetInterval(iv);
 		for (i = 0; i < 31; i++) if (aR.dates & (1UL << i)) x.SetDate(i);
 		r->SetMonthlyByDates(x);
 		}
@@ -1206,7 +1209,7 @@ static CAgnRptDef* RptFromL(const CalRepeat& aR, const TTime& aStart)
 	case CR_MONTHLY_DAYS:
 		{
 		TAgnMonthlyByDaysRpt x;
-		x.SetStartDate(aStart);
+		x.SetStartDate(aStart); x.SetInterval(iv);
 		for (w = 0; w < 5; w++)
 			for (i = 0; i < 7; i++)
 				if (aR.weeks[w] & (1 << i)) x.SetDay((TDay)i, (TAgnRpt::TWeekInMonth)w);
@@ -1214,12 +1217,13 @@ static CAgnRptDef* RptFromL(const CalRepeat& aR, const TTime& aStart)
 		}
 		break;
 	case CR_YEARLY_DATE:
-		{ TAgnYearlyByDateRpt x; x.SetStartDate(aStart); r->SetYearlyByDate(x); }
+		{ TAgnYearlyByDateRpt x; x.SetStartDate(aStart); x.SetInterval(iv); r->SetYearlyByDate(x); }
 		break;
 	case CR_YEARLY_DAY:
 		{
 		TAgnYearlyByDayRpt x;
 		x.SetStartDay((TDay)aR.yday, (TAgnRpt::TWeekInMonth)aR.yweek, TMonth(aR.ymonth), aStart.DateTime().Year());
+		x.SetInterval(iv);
 		r->SetYearlyByDay(x);
 		}
 		break;
