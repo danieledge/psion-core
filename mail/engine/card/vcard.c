@@ -78,7 +78,7 @@ static int types(const char *params)
 		w[n] = 0;
 		while (*p && *p != ';' && *p != ',') p++;
 		if (w[0] == '"') memmove(w, w + 1, strlen(w));
-		if (n && w[strlen(w) - 1] == '"') w[strlen(w) - 1] = 0;
+		if (w[0] && w[strlen(w) - 1] == '"') w[strlen(w) - 1] = 0;    /* (w may be empty now: it was a lone quote) */
 		if (!strncmp(w, "pref=", 5)) { bits |= T_PREF; continue; }    /* 4.0 PREF=1 */
 		for (i = 0; i < (int)(sizeof(kTypes) / sizeof(kTypes[0])); i++)
 			if (!strcmp(w, kTypes[i].w)) bits |= kTypes[i].bit;
@@ -374,6 +374,17 @@ static void put_line(Buf *o, const char *s)
 	put(o, "\r\n", 2);
 }
 
+/* a line of the server's card that stays. One longer than a line here holds
+   (a photo, a key, a long note) is written as the server had it, byte for
+   byte: read into line[] it was cut at VLINE and the rest was lost */
+static void keep_line(Buf *o, const char *line, int n, const char *raw, int rawlen)
+{
+	if (n < VLINE - 1) { put_line(o, line); return; }
+	while (rawlen > 0 && (raw[rawlen - 1] == '\r' || raw[rawlen - 1] == '\n')) rawlen--;
+	put(o, raw, rawlen);
+	put(o, "\r\n", 2);
+}
+
 static void type_param(int t, int v4, int kind, char *out, int max)
 {
 	static const struct { int bit; const char *w; } k[] = {
@@ -501,8 +512,9 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
 		if (k >= 0 && !keep[k] && p.group[0] && ng < 16) pm_copy(groups[ng++], p.group, sizeof(groups[0]));
 	}
 	pos = 0;
-	while ((n = ics_line(orig, olen, &pos, line, sizeof(line))) >= 0) {
-		int k, g, drop = 0;
+	for (;;) {
+		int k, g, drop = 0, from = pos;
+		if ((n = ics_line(orig, olen, &pos, line, sizeof(line))) < 0) break;
 		if (!n) continue;
 		parse(line, &p);
 		if (!strcmp(p.name, "END") && !pm_strcasecmp(p.value, "VCARD")) {
@@ -513,7 +525,7 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
 		k = kind_of(p.name);
 		if (k >= 0 && !keep[k]) drop = 1;
 		for (g = 0; g < ng && !drop; g++) if (p.group[0] && !strcmp(p.group, groups[g])) drop = 1;
-		if (!drop) put_line(&o, line);
+		if (!drop) keep_line(&o, line, n, orig + from, pos - from);
 	}
 	return o.bad ? -1 : o.n;
 }
