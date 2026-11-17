@@ -30,8 +30,9 @@
 #endif
 
 #ifdef TLS_VERIFY
-/* PsiMail checks the server's certificate chain and its CertificateVerify
-   signature (mail/engine/certcheck.c); PsiTerm and PsiWeb don't */
+/* PsiMail and PsiWeb (0.84 on) check the server's certificate chain and its
+   CertificateVerify signature (mail/engine/tlsv/certcheck.c); PsiTerm
+   doesn't (its downloads carry their own signatures) */
 extern void tlsv_start(void);
 extern const char *tlsv_certificate(const unsigned char *msg, int len);
 extern const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char th[32]);

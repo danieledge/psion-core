@@ -16,12 +16,20 @@
  * RSA only (keys up to 4096 bits): the Psion can afford RSA verification
  * (public exponent 65537) in well under a second, not ECDSA. Servers with
  * both kinds of certificate pick RSA because that is all PsiMail offers.
+ *
+ * PsiWeb (0.84 on) builds this too, with TLSV_APP_NAME "PsiWeb" and no
+ * trusted keys (its st_pin_check always says no: engine/pwcert.c there).
  */
 #include <string.h>
 #include <stdio.h>
 #include "includes.h"
 #include "calport.h"   /* core/mail/engine/cal: calp_dir, pm_progress, st_pin_check ... */
 #include "roots.h"
+
+/* the program named in the reasons (PsiWeb builds with its own name) */
+#ifndef TLSV_APP_NAME
+#define TLSV_APP_NAME "PsiMail"
+#endif
 
 #define MAX_CERTS  6
 #define CHAIN_MAX  (14 * 1024)
@@ -452,7 +460,7 @@ static int chain_ok(long now)
 			break;
 		}
 		if (j == g_ncert) {
-			snprintf(g_problem, sizeof(g_problem), "its certificate is not from an authority PsiMail knows");
+			snprintf(g_problem, sizeof(g_problem), "its certificate is not from an authority " TLSV_APP_NAME " knows");
 			return 0;
 		}
 		cur = j;
@@ -495,7 +503,7 @@ const char *tlsv_certificate(const unsigned char *msg, int len)
 		p += 2 + el;
 	}
 	if (!g_ncert) return "the server sent no certificate";
-	if (!g_cert[0].n) return "the server's key is not RSA (PsiMail can only check RSA)";
+	if (!g_cert[0].n) return "the server's key is not RSA (" TLSV_APP_NAME " can only check RSA)";
 	fingerprint(&g_cert[0]);
 
 	now = pm_time();
@@ -523,7 +531,7 @@ const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char t
 	alg = (msg[0] << 8) | msg[1];
 	sl = (msg[2] << 8) | msg[3];
 	if (4 + sl > len) return "bad CertificateVerify";
-	if (alg != 0x0804) return "the server used a signature PsiMail can't check";
+	if (alg != 0x0804) return "the server used a signature " TLSV_APP_NAME " can't check";
 	memset(content, 0x20, 64);
 	memcpy(content + 64, "TLS 1.3, server CertificateVerify", 33);
 	content[97] = 0;
