@@ -151,6 +151,9 @@ typedef struct
 typedef void (*HttpSink)(const char *data, int n, void *ctx);
 /* where requests go; user/pass for Basic authentication */
 void http_target(const char *host, int port, int tls, const char *user, const char *pass);
+/* the User-Agent sent from now on ("PsiMail/1.05 (Psion netBook)"); without a
+   call, "PsiMail (Psion Series 5mx)" as before */
+void http_user_agent(const char *ua);
 /* one request; the response body goes to sink (if any). Returns PM_RES_*. */
 int  http_request(const char *method, const char *path, const char *headers,
                   const char *body, int blen, HttpResp *r, HttpSink sink, void *ctx,

@@ -12,6 +12,11 @@
 #include "cal.h"
 
 static char g_host[80], g_auth[300];
+/* the User-Agent: a program's own (http_user_agent), or ("" until then)
+   the one every caller sent before there was a choice. (Zeroed, not
+   initialised data.) */
+static char g_ua[80];
+#define UA_DEFAULT "PsiMail (Psion Series 5mx)"
 static int  g_port, g_tls;
 static int  g_conn = -1;              /* pmn_conn_id() of our connection */
 
@@ -29,6 +34,15 @@ static void b64(const unsigned char *in, int n, char *out)
 		out[k++] = i + 2 < n ? t[v & 63] : '=';
 	}
 	out[k] = 0;
+}
+
+void http_user_agent(const char *ua)
+{
+	int i, k = 0;
+	/* (one header line: no line breaks or other controls) */
+	for (i = 0; ua && ua[i] && k < (int)sizeof(g_ua) - 1; i++)
+		if ((unsigned char)ua[i] >= 32 && ua[i] != 127) g_ua[k++] = ua[i];
+	g_ua[k] = 0;
 }
 
 void http_target(const char *host, int port, int tls, const char *user, const char *pass)
@@ -104,9 +118,9 @@ int http_request(const char *method, const char *path, const char *headers,
 		res = connect_now(why, whymax);
 		if (res != CAL_RES_OK) return res;
 		k = snprintf(req, sizeof(req),
-			"%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: PsiMail (Psion Series 5mx)\r\n"
+			"%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
 			"Authorization: Basic %s\r\nContent-Length: %d\r\n%s\r\n",
-			method, path, g_host, g_auth, blen, headers ? headers : "");
+			method, path, g_host, g_ua[0] ? g_ua : UA_DEFAULT, g_auth, blen, headers ? headers : "");
 		if (k >= (int)sizeof(req)) { snprintf(why, whymax, "Request too long"); return CAL_RES_FAILED; }
 		if (pmn_write(req, k) != 0 || (blen > 0 && pmn_write(body, blen) != 0)) {
 			g_conn = -1;
