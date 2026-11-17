@@ -108,6 +108,12 @@ void pg_lt_lookup_free(void* aLookup);
 int pg_lt_classify(const unsigned char* aData, int aLen, char* aFirst, int aFirstMax);
 void pg_lt_first_line(const unsigned char* aData, int aLen, const char* aSkip, char* aOut, int aMax);
 void pg_lt_report(PgLinkTest* aTest);
+/* (0.89) 1 the link part passed (2: the serial port is held by a program,
+ * perhaps the caller's own engine: the caller may replace the lines, nlines,
+ * when its own part shows that it was), 0 not; and a line of the caller's own
+ * added under the result (bounded; 0 when the dialog has no room left) */
+int pg_lt_link_ok(const PgLinkTest* aTest);
+int pg_lt_add_line(PgLinkTest* aTest, const char* aText);
 #ifdef __cplusplus
 }
 #endif
@@ -121,6 +127,13 @@ void pg_lt_report(PgLinkTest* aTest);
 class TDesC8;
 void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
 	int aResultDialog, int aFirstLineId);
+/* (0.89) The same, and then aThen, in the app's thread, before the result
+ * is shown: a program's own part of the test (PsiWeb fetches a small page
+ * through its route), which may add lines (pg_lt_add_line). Not called
+ * when the test was stopped. */
+typedef void (*PgLinkThenFn)(PgLinkTest* aTest, void* aCtx);
+void PgLinkTestThenL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
+	int aResultDialog, int aFirstLineId, PgLinkThenFn aThen, void* aCtx);
 /* The same, as a command: a Connect menu item. It brings the Psion's Internet
  * connection up (dialling, with no "Connect now?" question), or checks the
  * modem, and says what it found in the result dialog, titled aTitle. */

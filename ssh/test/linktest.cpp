@@ -161,6 +161,42 @@ int main()
 	for (int i = 0; i < t.nlines; i++)
 		CHECK(strlen(t.line[i]) < PG_LT_LINE);
 
+	// --- (0.89) did the link part pass (pg_lt_link_ok), and lines of the caller's own ---
+	{
+		PgLinkTest t;
+		memset(&t, 0, sizeof(t));
+		t.net_mode = 1; t.net_up = 1; t.dns = 0;
+		CHECK(pg_lt_link_ok(&t) == 1);
+		t.dns = -5;                      // the name not looked up
+		CHECK(pg_lt_link_ok(&t) == 0);
+		t.dns = 1; t.need_dial = 1;      // down, not dialled
+		CHECK(pg_lt_link_ok(&t) == 0);
+		memset(&t, 0, sizeof(t));
+		t.port = PG_PORT_OK; t.at = PG_AT_OK;
+		CHECK(pg_lt_link_ok(&t) == 1);
+		t.at = PG_AT_GARBAGE;
+		CHECK(pg_lt_link_ok(&t) == 0);
+		t.cts_blocked = 1; t.at_noflow = PG_AT_OK;
+		CHECK(pg_lt_link_ok(&t) == 1);
+		t.port = PG_PORT_BUSY;
+		CHECK(pg_lt_link_ok(&t) == 2);
+		t.port = PG_PORT_REMOTE;          // (C32's word for a port the caller's engine holds too)
+		CHECK(pg_lt_link_ok(&t) == 2);
+		t.port = PG_PORT_FAIL;
+		CHECK(pg_lt_link_ok(&t) == 0);
+		memset(&t, 0, sizeof(t));
+		char longer[300];
+		memset(longer, 'x', sizeof(longer) - 1);
+		longer[sizeof(longer) - 1] = 0;
+		for (int i = 0; i < PG_LT_LINES; i++)
+			CHECK(pg_lt_add_line(&t, i ? longer : "Web page: opened example.com direct") == 1);
+		CHECK(pg_lt_add_line(&t, "one too many") == 0);
+		CHECK(t.nlines == PG_LT_LINES);
+		CHECK(strcmp(t.line[0], "Web page: opened example.com direct") == 0);
+		CHECK(strlen(t.line[1]) == PG_LT_LINE - 1);
+		CHECK(pg_lt_add_line(&t, 0) == 0);
+	}
+
 	printf("%d checks, %d failed\n", checks, fails);
 	return fails ? 1 : 0;
 	}

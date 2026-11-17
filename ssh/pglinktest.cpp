@@ -255,7 +255,8 @@ static void PgLinkFree(TAny* aTest)
 	}
 
 static void PgLinkRunL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
-	int aResultDialog, int aFirstLineId, TBool aConnect, const TDesC* aTitle)
+	int aResultDialog, int aFirstLineId, TBool aConnect, const TDesC* aTitle,
+	PgLinkThenFn aThen = 0, void* aCtx = 0)
 	{
 	CEikonEnv* env = CEikonEnv::Static();
 	PgLinkTest* t = new(ELeave) PgLinkTest;
@@ -308,6 +309,8 @@ static void PgLinkRunL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& 
 			near = ui->Application()->AppFullName();
 		PsiHoldStart(env->FsSession(), near);
 		}
+	if (aThen)
+		aThen(t, aCtx);                  // (0.89) the program's own part (PgLinkTestThenL)
 	CPgLinkResultDialog* d = new(ELeave) CPgLinkResultDialog(*t, aFirstLineId, aTitle);
 	d->ExecuteLD(aResultDialog);
 	CleanupStack::PopAndDestroy();       // t
@@ -317,6 +320,12 @@ void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppSt
 	int aResultDialog, int aFirstLineId)
 	{
 	PgLinkRunL(aBaudIndex, aRtsCts, aNetMode, aPppStart, aResultDialog, aFirstLineId, EFalse, 0);
+	}
+
+void PgLinkTestThenL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
+	int aResultDialog, int aFirstLineId, PgLinkThenFn aThen, void* aCtx)
+	{
+	PgLinkRunL(aBaudIndex, aRtsCts, aNetMode, aPppStart, aResultDialog, aFirstLineId, EFalse, 0, aThen, aCtx);
 	}
 
 void PgLinkConnectL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,

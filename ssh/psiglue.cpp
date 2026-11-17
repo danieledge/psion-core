@@ -3524,6 +3524,33 @@ extern "C" void pg_lt_report(PgLinkTest* aT)
 		LtReportModem(aT);
 	}
 
+// (PsiWeb 0.89) Did the link part pass, so that a program may go on to use
+// the connection (PsiWeb fetches a small page through its route)? 1 yes,
+// 2 the serial port is held by a program (perhaps the caller's own engine,
+// which then has the modem: worth trying; C32 says "access denied" for that
+// as for the Remote link, see LtReportPort), 0 no.
+extern "C" int pg_lt_link_ok(const PgLinkTest* aT)
+	{
+	if (aT->net_mode)
+		return !aT->need_dial && aT->dns == 0;
+	if (aT->port == PG_PORT_BUSY || aT->port == PG_PORT_REMOTE)
+		return 2;
+	if (aT->port != PG_PORT_OK)
+		return 0;
+	return (aT->cts_blocked ? aT->at_noflow : aT->at) == PG_AT_OK;
+	}
+
+// A line of the caller's own under the test's (bounded, and only while
+// there is room): 1 added, 0 no room
+extern "C" int pg_lt_add_line(PgLinkTest* aT, const char* aText)
+	{
+	char* l = LtNewLine(aT);
+	if (!l)
+		return 0;
+	LtCat(l, PG_LT_LINE, aText ? aText : "");
+	return 1;
+	}
+
 // --- the EPOC part ---
 #ifndef PG_LINK_TEST_HOST
 
