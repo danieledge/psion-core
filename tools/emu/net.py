@@ -40,6 +40,8 @@ so the addresses typed on the Psion can be short.
                 build/mail-pkg/, build/web-pkg/ in this checkout or the
                 program's beside it, as mkcard.ts)
   EMU_RETRIES   runs a failed test again this many times (default 1)
+  EMU_MAIL_SECS how long the mail test runs after PsiMail starts (default 150)
+  EMU_MAIL_SETUP 0: an older PsiMail, with no setup assistant to close first
   EMU_SSH_HOSTKEY  rsa: the ssh test's sshd has an RSA host key (default ed25519)
   EMU_PROXY_URL the address the proxy test types (default news.ycombinator.com)
   --keep        leave the test keys in the work folder (logs and
@@ -276,21 +278,34 @@ def test_proxy(ctx):
 def test_mail(ctx):
     port = free_port()
     log = os.path.join(WORK, 'imap.log')
-    ctx.procs.start('imap', [sys.executable, '-u', os.path.join(REPO, 'mail', 'test', 'fakeimap.py'), str(port)], log)
+    # (psimail's own checkout has test/fakeimap.py; the old single repository had mail/test/)
+    fake = [p for p in (os.path.join(REPO, 'test', 'fakeimap.py'), os.path.join(REPO, 'mail', 'test', 'fakeimap.py'),
+                        os.path.join(REPO, '..', 'psimail', 'test', 'fakeimap.py')) if os.path.exists(p)]
+    if not fake:
+        return False, 'no fakeimap.py (the psimail checkout\'s test/)'
+    ctx.procs.start('imap', [sys.executable, '-u', fake[0], str(port)], log)
     if not wait_port(port):
         return False, 'fakeimap.py did not start'
     card = os.path.join(WORK, 'mail.img')
     make_card('psimail', card, 'EMU_PKG_MAIL')
     ctx.modem('mail', redirect='127.0.0.1:%d' % port)
     s = mail_script()
-    out = emulate('mail', card, ctx.sock, s, secs=60)
+    # (the check: a TLS-less login, the folders and a sync, all through the
+    # modem at 115200 - over 60 s on a loaded PC; EMU_MAIL_SECS to change)
+    out = emulate('mail', card, ctx.sock, s, secs=int(os.environ.get('EMU_MAIL_SECS', 150)))
     return grep(log, 'LOGIN') and grep(log, 'FETCH'), out
 
 
 def mail_script():
-    # With no account PsiMail opens "Mail account" on its own (~86 s).
+    # With no settings at all PsiMail (1.03 on) first asks how the Psion gets
+    # online (the setup assistant): Esc leaves the connection as it is
+    # (EMU_MAIL_SETUP=0 for an older PsiMail, which has none). Then, with no
+    # account, it opens "Mail account" on its own (~86 s).
     # Account page: the email address (the servers default from it).
-    s = Script(90).key(DOWN).key(DOWN).type('dan@test.lan', gap=0.35)
+    if os.environ.get('EMU_MAIL_SETUP', '1') != '0':
+        s = Script(86).key(ESC, gap=4).key(DOWN).key(DOWN).type('dan@test.lan', gap=0.35)
+    else:
+        s = Script(90).key(DOWN).key(DOWN).type('dan@test.lan', gap=0.35)
     # Incoming page: tap its tab, then Down into the fields (IMAP server left
     # blank: imap.test.lan, which the modem's redirect sends to fakeimap).
     # A number editor's value is selected on arrival, so typing replaces it.
