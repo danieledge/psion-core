@@ -245,8 +245,10 @@ def test_web(ctx):
     card = os.path.join(WORK, 'web.img')
     make_card('psiweb', card, 'EMU_PKG_WEB')
     ctx.modem('web', redirect='127.0.0.1:%d' % port)
-    # PsiWeb is up on its welcome page at ~55 s; Ctrl+O, the address, Enter
-    s = Script(60).ctrl('o').wait(1).type('127.0.0.1\r', gap=0.5)
+    # PsiWeb is up on its welcome page at ~55 s, with the setup assistant
+    # over it on a new card (PsiWeb 0.85): Esc (Cancel), then Ctrl+O, the
+    # address, Enter. (Esc with no dialog only says "Nothing to stop".)
+    s = Script(60).key(ESC, gap=2).ctrl('o').wait(1).type('127.0.0.1\r', gap=0.5)
     out = emulate('web', card, ctx.sock, s, secs=30)
     return grep(log, 'GET / HTTP') , out
 
@@ -262,7 +264,7 @@ def test_proxy(ctx):
     # PsiWeb is up on its welcome page at ~55 s. Preferences (Ctrl+K): Down
     # to "Use a proxy", Right for Yes, Down to the host, psiproxy (the port
     # is 8080 already), Enter. The engine restarts with the proxy.
-    s = Script(60).ctrl('k', gap=2).key(DOWN, gap=0.6).key(DOWN, gap=0.6).key(DOWN, gap=0.6)
+    s = Script(60).key(ESC, gap=2).ctrl('k', gap=2).key(DOWN, gap=0.6).key(DOWN, gap=0.6).key(DOWN, gap=0.6)
     s.key(RIGHT, gap=0.8).key(DOWN, gap=0.8).type('psiproxy', gap=0.35).key(ENTER, gap=25)
     # then Ctrl+O, the address, Enter
     s.ctrl('o', gap=1.5).type(url + '\r', gap=0.35)
