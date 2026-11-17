@@ -77,6 +77,7 @@ nothing had to be renamed and `git log` follows every file back:
 | `ssh/psishared.h`, `ssh/psibell.h` | the shared memory chunk between each program and its engine, and the doorbells |
 | `ssh/psilink.h` | `C:\System\Data\PsiLink.ini`, the connection settings every program shares |
 | `ssh/pglinktest.cpp`, `.h` | Connection settings > Test, compiled into every program |
+| `ssh/aesgcm.c`, `.h` | AES-128-GCM, TLS 1.3's second cipher (`TLS_AES_GCM`: PsiWeb from 0.86; PsiMail can define it in its `tls/includes.h`) |
 | `ssh/psilink.rh` | The words of the shared connection settings (the route names), for every program's `.rss` |
 | `ssh/pgsetup.cpp`, `.h`, `.hrh`, `.rssi` | The setup assistant for new users (PsiWeb, PsiMail): `docs/setup-assistant.md` |
 | `ssh/pglinkseen.h`, `ssh/pgdevbox.h` | the link's last sign of life; the optional dev box (PsiProxy-only routes) |

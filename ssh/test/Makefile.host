@@ -2,7 +2,7 @@
 #   make -f test/Makefile.host test      build and run them all
 # Each one is a PC program; nothing here needs the EPOC SDK.
 
-all: linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest
+all: linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest
 
 # Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
 linktest: test/linktest.cpp psiglue.cpp pglinktest.h
@@ -25,6 +25,10 @@ pgdevboxtest: test/pgdevboxtest.c pgdevbox.h
 psiholdtest: test/psiholdtest.cpp psilink.h
 	g++ -Wall -O1 -g -fsanitize=address,undefined test/psiholdtest.cpp -o $@
 
+# AES-128-GCM, TLS 1.3's second cipher (aesgcm.c): FIPS-197 and the GCM vectors
+aesgcmtest: test/aesgcmtest.c aesgcm.c aesgcm.h
+	gcc -Wall -Wextra -O1 -g -fsanitize=address,undefined -I . test/aesgcmtest.c aesgcm.c -o $@
+
 # The setup assistant's choices and what they write (pgsetup.h)
 setuptest: test/setuptest.cpp pgsetup.h pgsetup.hrh
 	g++ -Wall -Wextra -O1 -g -fsanitize=address,undefined -I . test/setuptest.cpp -o $@
@@ -36,8 +40,9 @@ test: all
 	./pgdevboxtest
 	./psiholdtest
 	./setuptest
+	./aesgcmtest
 
 clean:
-	rm -f linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest
+	rm -f linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest aesgcmtest
 
 .PHONY: all test clean

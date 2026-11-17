@@ -1,7 +1,8 @@
 /* tls13.c - a minimal TLS 1.3 client for psissh (PsiTerm's updater)
  *
  * Just enough TLS to download files from GitHub over HTTPS on a Psion 5mx:
- *   TLS 1.3 only, TLS_CHACHA20_POLY1305_SHA256, X25519 key exchange.
+ *   TLS 1.3 only, TLS_CHACHA20_POLY1305_SHA256 (and, with TLS_AES_GCM,
+ *   TLS_AES_128_GCM_SHA256: aesgcm.c), X25519 key exchange.
  * The server certificate is NOT checked (the Psion has no CA store and could
  * not afford the RSA/ECDSA maths). Downloads are instead protected by an
  * Ed25519 signature over the file, checked with a public key built into
@@ -20,6 +21,9 @@
 #include "dbrandom.h"
 #include "curve25519.h"
 #include "tls13.h"
+#ifdef TLS_AES_GCM
+#include "aesgcm.h"     /* TLS_AES_128_GCM_SHA256, the second cipher (PsiWeb, PsiMail) */
+#endif
 
 #ifdef TLS_FAST_CRYPTO
 /* web/tls/sha256.c instead of libtomcrypt's (LTC_SMALL_CODE: slow) */
@@ -156,7 +160,15 @@ typedef struct {
 	unsigned char key[32];
 	unsigned char iv[12];
 	unsigned long long seq;
+#ifdef TLS_AES_GCM
+	aesgcm_key gcm;                    /* the key ready for GCM, when it is the cipher */
+#endif
 } tls_dir;
+
+/* the cipher the server chose: 0x1303 TLS_CHACHA20_POLY1305_SHA256, or
+   (TLS_AES_GCM) 0x1301 TLS_AES_128_GCM_SHA256. Both use SHA-256, so the
+   key schedule is the same; only the key's length and the AEAD differ. */
+static int g_cipher = 0x1303;
 
 static tls_dir g_rd, g_wr;               /* read (server) / write (client) keys */
 static int g_encrypted;
@@ -218,6 +230,12 @@ static void hkdf_label(const unsigned char secret[32], const char *label,
 
 static void set_keys(tls_dir *d, const unsigned char secret[32])
 {
+#ifdef TLS_AES_GCM
+	if (g_cipher == 0x1301) {
+		hkdf_label(secret, "key", NULL, 0, d->key, 16);
+		aesgcm_setkey(&d->gcm, d->key);
+	} else
+#endif
 	hkdf_label(secret, "key", NULL, 0, d->key, 32);
 	hkdf_label(secret, "iv", NULL, 0, d->iv, 12);
 	d->seq = 0;
@@ -262,7 +280,7 @@ extern void tls_aead_seal(const unsigned char key[32], const unsigned char nonce
 extern int tls_aead_open(const unsigned char key[32], const unsigned char nonce[12],
                          const unsigned char *aad, int aadlen, unsigned char *buf, int len);
 
-static void aead_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+static void cc_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
 {
 	unsigned char nonce[12];
 	aead_nonce(d, nonce);
@@ -270,7 +288,7 @@ static void aead_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned
 	d->seq++;
 }
 
-static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+static int cc_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
 {
 	unsigned char nonce[12];
 	aead_nonce(d, nonce);
@@ -280,7 +298,7 @@ static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned 
 }
 #else
 /* encrypt in place: buf holds len bytes of plaintext, 16 bytes of room after */
-static void aead_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+static void cc_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
 {
 	chacha_state cs;
 	unsigned char nonce[12];
@@ -299,7 +317,7 @@ static void aead_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned
 }
 
 /* decrypt in place; returns 0 if the tag is good */
-static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+static int cc_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
 {
 	chacha_state cs;
 	unsigned char nonce[12], tag[16];
@@ -318,6 +336,34 @@ static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned 
 	return 0;
 }
 #endif
+
+static void aead_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+{
+#ifdef TLS_AES_GCM
+	if (g_cipher == 0x1301) {
+		unsigned char nonce[12];
+		aead_nonce(d, nonce);
+		aesgcm_seal(&d->gcm, nonce, aad, aadlen, buf, len);
+		d->seq++;
+		return;
+	}
+#endif
+	cc_seal(d, aad, aadlen, buf, len);
+}
+
+static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+{
+#ifdef TLS_AES_GCM
+	if (g_cipher == 0x1301) {
+		unsigned char nonce[12];
+		aead_nonce(d, nonce);
+		if (aesgcm_open(&d->gcm, nonce, aad, aadlen, buf, len) != 0) return -1;
+		d->seq++;
+		return 0;
+	}
+#endif
+	return cc_open(d, aad, aadlen, buf, len);
+}
 
 /* ---------------------------------------------------------------- raw record I/O */
 
@@ -512,7 +558,13 @@ int tls_connect(const char *host, char *why, int whymax)
 	ch[n++] = 3; ch[n++] = 3;                    /* legacy_version */
 	genrandom(ch + n, 32); n += 32;              /* random */
 	ch[n++] = 32; genrandom(ch + n, 32); n += 32;/* legacy session id (middlebox compat) */
+#ifdef TLS_AES_GCM
+	/* ChaCha20-Poly1305 first (much the quicker without AES instructions),
+	   then AES-128-GCM, the cipher every TLS 1.3 server has */
+	put16(ch + n, 4); n += 2; ch[n++] = 0x13; ch[n++] = 0x03; ch[n++] = 0x13; ch[n++] = 0x01;
+#else
 	put16(ch + n, 2); n += 2; ch[n++] = 0x13; ch[n++] = 0x03;   /* TLS_CHACHA20_POLY1305_SHA256 */
+#endif
 	ch[n++] = 1; ch[n++] = 0;                    /* no compression */
 	ext_start = n; n += 2;
 	/* server_name */
@@ -617,7 +669,12 @@ int tls_connect(const char *host, char *why, int whymax)
 		p += 2 + 32;
 		sid = hs[p]; p += 1 + sid;
 		if (p + 5 > 4 + mlen) { g_err = "bad ServerHello"; goto fail; }
-		if (hs[p] != 0x13 || hs[p + 1] != 0x03) { g_err = "server chose an unsupported cipher"; goto fail; }
+		g_cipher = (hs[p] << 8) | hs[p + 1];
+#ifdef TLS_AES_GCM
+		if (g_cipher != 0x1303 && g_cipher != 0x1301) { g_err = "server chose an unsupported cipher"; goto fail; }
+#else
+		if (g_cipher != 0x1303) { g_err = "server chose an unsupported cipher"; goto fail; }
+#endif
 		p += 3;
 		el = (hs[p] << 8) | hs[p + 1]; p += 2;
 		end = p + el;
