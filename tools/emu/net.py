@@ -32,8 +32,11 @@ Every server listens on 127.0.0.1 only, and every process it starts is
 stopped at the end (it never kills anything it did not start). The sshd
 runs as you, with its own host key, config and authorized_keys in the work
 folder, and a forced command (a plain sh in the work folder): it never reads
-~/.ssh. The modem's HOSTMODEM_REDIRECT sends every dial to the test's server,
-so the addresses typed on the Psion can be short.
+~/.ssh. The modem's HOSTMODEM_REDIRECT sends every plain dial to the test's
+server, so the addresses typed on the Psion can be short. A dial to one of
+the modem's TLS ports (443, with its standard AT$TLS=1) is the modem's own
+TLS call and goes to the real host, unless the test gives Ctx.modem a
+tls_redirect (PsiWeb's webtest sends them to a port that refuses).
 
   EMU_NET_DIR   work folder (default build/emu/net)
   EMU_PKG_TERM, EMU_PKG_MAIL, EMU_PKG_WEB  app files (default: pkg/,
@@ -491,12 +494,29 @@ class Ctx:
         self.sockdir = tempfile.mkdtemp(prefix='psiemu-', dir='/tmp')
         self.sock = os.path.join(self.sockdir, 'modem')
         self.hostmodem = build_hostmodem()
+        self.refusers = []                   # (modem(tls_redirect='refuse')'s ports)
 
-    def modem(self, name, redirect=None):
+    def modem(self, name, redirect=None, tls_redirect=None):
+        """Starts hostmodem; returns its log. redirect (HOSTMODEM_REDIRECT):
+        where every plain call goes. The modem's own TLS calls (a dial to one
+        of its TLS ports, 443 among them, with AT$TLS=1 as standard) are not
+        plain calls: they go to the real host unless tls_redirect is given
+        (HOSTPROXY_REDIRECT, plain TCP, which the modem's web proxy's own
+        fetches also use). tls_redirect='refuse' sends them to a port on
+        127.0.0.1 that refuses every call (bound, never listening), so the
+        modem says NO CARRIER at once, as for a site that is down, and
+        nothing reaches the Internet."""
         env = dict(os.environ)
         env.pop('HOSTMODEM_REDIRECT', None)
         if redirect:
             env['HOSTMODEM_REDIRECT'] = redirect
+        if tls_redirect == 'refuse':
+            s = socket.socket()
+            s.bind(('127.0.0.1', 0))         # (held until the test ends: no one else gets the port)
+            self.refusers.append(s)
+            tls_redirect = '127.0.0.1:%d' % s.getsockname()[1]
+        if tls_redirect:
+            env['HOSTPROXY_REDIRECT'] = tls_redirect
         if os.path.exists(self.sock):
             os.remove(self.sock)
         log = os.path.join(WORK, name + '-modem.log')
@@ -517,6 +537,8 @@ class Ctx:
 
     def close(self):
         self.procs.stop_all()
+        for s in self.refusers:
+            s.close()
         if os.path.exists(self.sock):
             os.remove(self.sock)
         os.rmdir(self.sockdir)
