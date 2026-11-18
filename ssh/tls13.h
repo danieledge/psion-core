@@ -5,6 +5,7 @@ int tls_connect(const char *host, char *why, int whymax);   /* after pg_dial */
 int tls_write(const void *buf, int len);
 int tls_read(void *buf, int max, int timeout_ms);           /* >0 bytes, 0 closed, <0 error */
 const char *tls_error(void);
+int tls_end(void);   /* after a read of 0 or -1: 2 close_notify, 1 closed between records, 0 cut or an error */
 int tls_pending(void);                                     /* decrypted bytes waiting */
 void tls_close(void);                                      /* after the connection: wipes the keys and buffers */
 /* PsiWeb and PsiMail only (TLS_FAST_X25519, TLS_RESUME in their tls/includes.h) */

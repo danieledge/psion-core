@@ -233,10 +233,16 @@ int http_request(const char *method, const char *path, const char *headers,
 		} else {
 			/* (to the close: a timeout part-way is a failure, not a whole
 			   answer - a cut calendar list lost the calendars missing from
-			   it. A close without TLS's close_notify reads as -1 and is the
-			   end, as many servers end so) */
+			   it. So is a close that was not the server's own end: a reset,
+			   the line lost, the modem's NO CARRIER (pmn_clean_end). A clean
+			   close without TLS's close_notify reads as -1 and is the end,
+			   as many servers end so) */
 			k = body_bytes(-1, r, sink, ctx);
 			if (k == PMN_TIMEOUT || k == PMN_CANCEL) return lost(k, why, whymax);
+			if (!pmn_clean_end()) {
+				pm_log("http: the answer (%ld bytes, no length) ended without a clean close: not used", r->length);
+				return lost(-1, why, whymax);
+			}
 			close_after = 1;
 		}
 		if (close_after) { pmn_close(0); g_conn = -1; }

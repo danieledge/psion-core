@@ -8,6 +8,7 @@
 #include "../../ssh/tls13.h"
 extern int tls_pending(void);
 #endif
+extern int  pg_net_closed_why(void);      /* psiglue: 0 the server's FIN, < 0 an error, 1 open */
 
 extern PsiShared *pg_shared(void);
 extern int  pg_dial(char *why, int max);
@@ -33,6 +34,7 @@ static int  g_port;
 static char g_host[128];
 static char g_tail[16];          /* modem: last bytes, to spot NO CARRIER */
 static int  g_dead;
+static int  g_clean;             /* the connection ended cleanly (pwn_clean_end) */
 
 /* Psion Internet: PPP has no LCP echo, so NIFMAN calls a dead link up. A
    request sent on a connection that had been idle for 30 s or more, and not
@@ -71,6 +73,7 @@ int pwn_connect(const char *host, int port, int tls, char *why, int whymax)
 #endif
 	g_open = 1;
 	g_dead = 0;
+	g_clean = 0;
 	g_tls = tls;
 	g_port = port;
 	snprintf(g_host, sizeof(g_host), "%s", host);
@@ -180,6 +183,24 @@ static int modem_data(unsigned char *b, int n)
 	return i;
 }
 
+/* Psion Internet: the server ended the connection itself (its FIN, not a
+   reset or the link lost). The modem route cannot say: its "NO CARRIER" is
+   the same for a server's close and a dropped line. */
+static int tcp_clean(void)
+{
+	return !pwn_modem() && pg_net_closed_why() == 0;
+}
+
+/* After a read said "closed" (0) or failed: 1 if the connection ended
+ * cleanly, so an answer read "to the close" (no Content-Length, not
+ * chunked) is whole. 0 for a reset, a lost line, a timeout, TLS cut part-way
+ * through a record, and anything on the modem route but TLS's close_notify:
+ * then the answer may be cut short and must not be used. */
+int pwn_clean_end(void)
+{
+	return g_clean;
+}
+
 /* a read timed out with nothing back since the request */
 static void idle_probe(void)
 {
@@ -205,12 +226,15 @@ int pwn_read(void *buf, int max, int timeout_ms)
 			if (m & 8) return PWN_CANCEL;
 			if (pg_net_avail() == 0) {
 				if (!(m & 1)) idle_probe();
+				if (m & 1) g_clean = g_clean || tcp_clean();   /* (closed between records; close_notify stays) */
 				return (m & 1) ? 0 : PWN_TIMEOUT;   /* closed : nothing yet */
 			}
 		}
 		/* a record is on its way: allow for a slow line */
 		n = tls_read(buf, max, 20000);
 		if (n == -2) return PWN_CANCEL;
+		if (n <= 0)
+			g_clean = tls_end() == 2 || (tls_end() == 1 && tcp_clean());
 		if (n < 0 && pwn_modem() && pg_net_avail() == 0) return 0;
 		if (n > 0) g_awaiting = 0;
 		return n;
@@ -221,6 +245,7 @@ int pwn_read(void *buf, int max, int timeout_ms)
 		if (m & 8) return PWN_CANCEL;
 		if (pg_net_avail() == 0) {
 			if (!(m & 1)) idle_probe();
+			if (m & 1) g_clean = tcp_clean();
 			return (m & 1) ? 0 : PWN_TIMEOUT;
 		}
 	}

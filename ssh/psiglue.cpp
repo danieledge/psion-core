@@ -2335,6 +2335,15 @@ extern "C" void pg_net_set_closed()
 	gNetClosed = 1;
 	}
 
+// How the connection closed: 0 a clean end (Psion Internet: the server's
+// FIN, KErrEof), < 0 the error (a reset, the link lost, the carrier gone),
+// 1 not closed. The modem route has no clean end to report: the modem's
+// "NO CARRIER" is the same for both, which pwnet knows.
+extern "C" int pg_net_closed_why()
+	{
+	return gNetClosed ? gNetClosedWhy : 1;
+	}
+
 // Psion Internet: send small writes at once, without waiting for the ACK of
 // what went before (Nagle off, KSoTcpNoDelay). For a program whose small
 // messages are what the user waits for (a screen update, a status line):

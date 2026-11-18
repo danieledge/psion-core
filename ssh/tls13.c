@@ -155,6 +155,11 @@ static unsigned char g_rec[REC_MAX];     /* one record being read */
 static unsigned char g_app[16384 + 256]; /* decrypted application data */
 static int g_app_pos, g_app_len;
 static int g_closed;
+/* how the connection's reading ended (tls_end): 2 the server's close_notify,
+   1 the connection closed between two records, 0 not ended or anything else
+   (cut part-way through a record, an error alert, damaged data) */
+static int g_end;
+static int g_mid;                        /* read_record is part-way through a record */
 
 typedef struct {
 	unsigned char key[32];
@@ -402,6 +407,7 @@ static int read_record(int *len, int timeout_ms)
 	unsigned char hdr[5];
 	int n, r;
 	for (;;) {
+		g_mid = 0;
 		if (g_first) {
 			/* The modem's "CONNECT ..." line can leave a CR/LF (or more text)
 			   ahead of the server's first record: skip up to 64 bytes of it */
@@ -413,8 +419,14 @@ static int read_record(int *len, int timeout_ms)
 				if (jl < (int)sizeof(g_junk) - 4) { sprintf(g_junk + jl, " %02x", hdr[0]); jl += 3; }
 				if (++skipped > 64) { g_err = "unexpected reply (not TLS?)"; return -1; }
 			}
+			g_mid = 1;
 			if ((r = read_exact(hdr + 1, 4, timeout_ms)) < 0) return r;
-		} else if ((r = read_exact(hdr, 5, timeout_ms)) < 0) return r;
+		} else if ((r = read_exact(hdr, 5, timeout_ms)) < 0) {
+			/* (bytes of the header came: "connection dropped", part-way) */
+			if (strcmp(g_err, "no reply from server")) g_mid = 1;
+			return r;
+		}
+		g_mid = 1;
 		if (hdr[1] != 3) {
 			static char e[96];
 			sprintf(e, "unexpected reply (not TLS?):%.40s %02x %02x %02x", g_junk, hdr[0], hdr[1], hdr[2]);
@@ -424,6 +436,7 @@ static int read_record(int *len, int timeout_ms)
 		n = (hdr[3] << 8) | hdr[4];
 		if (n > REC_MAX - 5) { g_err = "record too big"; return -1; }
 		if ((r = read_exact(g_rec, n, timeout_ms)) < 0) return r;
+		g_mid = 0;
 		if (hdr[0] == 20) continue;            /* ChangeCipherSpec: ignored in 1.3 */
 		if (!g_encrypted) {
 			*len = n;
@@ -517,6 +530,7 @@ int tls_connect(const char *host, char *why, int whymax)
 	g_err = "handshake failed";
 	g_encrypted = 0;
 	g_closed = 0;
+	g_end = g_mid = 0;
 	g_first = 1;
 	g_junk[0] = 0;
 	g_app_pos = g_app_len = 0;
@@ -899,7 +913,9 @@ int tls_read(void *buf, int max, int timeout_ms)
 		if (g_closed) return 0;
 		type = read_record(&len, timeout_ms);
 		if (type < 0) {
-			/* server closed the TCP connection without close_notify */
+			/* server closed the TCP connection without close_notify (or
+			   nothing came in time): between records, not part-way */
+			g_end = !g_mid && !strcmp(g_err, "no reply from server") && pg_net_avail() == 0;
 			if (!strcmp(g_err, "no reply from server") && pg_net_avail() == 0)
 				return -1;
 			return type;
@@ -910,6 +926,7 @@ int tls_read(void *buf, int max, int timeout_ms)
 			g_app_len = len;
 		} else if (type == 21) {                  /* alert: close_notify or error */
 			g_closed = 1;
+			g_end = len >= 2 && g_rec[1] == 0 ? 2 : 0;   /* (description 0: close_notify) */
 			return 0;
 		}
 #ifdef TLS_RESUME
@@ -927,6 +944,10 @@ int tls_read(void *buf, int max, int timeout_ms)
 }
 
 const char *tls_error(void) { return g_err ? g_err : ""; }
+
+/* after a read returned 0 or -1: 2 the server ended with close_notify, 1 the
+   connection closed (or went quiet) between two records, 0 otherwise */
+int tls_end(void) { return g_end; }
 
 /* decrypted bytes waiting to be read (PsiWeb polls without blocking) */
 int tls_pending(void) { return g_app_pos < g_app_len; }

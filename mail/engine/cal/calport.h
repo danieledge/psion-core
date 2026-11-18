@@ -83,6 +83,12 @@ int  pmn_write(const void *buf, int len);  /* 0 ok */
 int  pmn_read(void *buf, int max, int timeout_ms);       /* >0, 0 closed, <0 */
 int  pmn_readline(char *buf, int max, int timeout_ms);   /* length without CRLF, <0 error */
 void pmn_close(int hangup);
+/* after a read said "closed" (0) or failed: 1 if the server ended the
+   connection itself (its FIN on Psion Internet, TLS's close_notify), 0 for a
+   reset, a lost line or the modem's NO CARRIER, which may have cut the
+   answer short. http.c takes an answer with no length "to the close" as
+   whole only when this says 1 (PsiSync: pwnet's pwn_clean_end) */
+int  pmn_clean_end(void);
 
 /* ---- the certificate check (core/mail/engine/tlsv/certcheck.c) */
 const char *tlsv_problem(void);            /* why the last connection's certificate was refused, "" */

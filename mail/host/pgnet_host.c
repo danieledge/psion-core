@@ -21,6 +21,7 @@ PsiShared *pg_shared(void);
 static int g_fd = -1;
 static unsigned char g_rx[4096];
 static int g_len, g_pos, g_closed;
+static int g_why;                          /* pg_net_closed_why: 0 the server's FIN, -36 a reset */
 
 
 void pg_msleep(int ms) { usleep(ms * 1000); }
@@ -31,6 +32,7 @@ int pg_link_is_open(void) { return g_fd >= 0; }
 int pg_link_keep(void) { const char *k = getenv("PG_LINK_KEEP"); return k && *k == '1'; }
 int pg_rx_errors(int *last) { if (last) *last = 0; return 0; }
 int pg_net_closed(void) { return 0; }
+int pg_net_closed_why(void) { return g_closed ? g_why : 1; }
 void pg_link_suspect(void) { }              /* (no Psion Internet link on a PC) */
 void pg_set_link_log(void (*fn)(const char *)) { (void)fn; }
 
@@ -45,7 +47,7 @@ int pg_dial(char *why, int max)
 		fprintf(stderr, "[net] WARNING: dialling with the last connection still open\n");
 	}
 	if (g_fd >= 0) close(g_fd);
-	g_fd = -1; g_len = g_pos = 0; g_closed = 0;
+	g_fd = -1; g_len = g_pos = 0; g_closed = 0; g_why = 0;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_family = AF_INET;
@@ -88,7 +90,7 @@ void pg_hangup(void)
 {
 	fprintf(stderr, "[net] hang up\n");
 	if (g_fd >= 0) close(g_fd);
-	g_fd = -1; g_closed = 1;
+	g_fd = -1; g_closed = 1; g_why = -3;       /* (our own hang-up: not the server's end) */
 }
 
 /* tests: PM_OVERRUN=bytes[,bytes...] loses 200 bytes of what arrives at
@@ -123,6 +125,8 @@ static void fill(int ms)
 	n = recv(g_fd, g_rx, sizeof(g_rx), 0);
 	if (n <= 0) {
 		g_closed = 1;
+		g_why = n == 0 ? 0 : -36;             /* (a reset or error, as KErrDisconnected) */
+		if (n < 0) fprintf(stderr, "[net] the connection was reset\n");
 		if (getenv("PM_MODEM")) {
 			memcpy(g_rx, "\r\nNO CARRIER\r\n", 14);
 			g_pos = 0; g_len = 14;
