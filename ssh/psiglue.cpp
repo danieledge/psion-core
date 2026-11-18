@@ -2643,7 +2643,30 @@ static int StartPpp(char* aResult, int aResultMax)
 			gClaimUp = 1;
 			}
 		else if (r == -13)
-			Say("  The serial port is in use by another program - trying anyway.\r\n");
+			{
+			// "Access denied" is the Remote link or another program - and, on
+			// a real netBook with PPP already up over the port (the Atom's
+			// PPP route, 18 November 2026), the Psion's own dial-up, which
+			// NetworkActive had not owned up to before StartPpp. So NIFMAN is
+			// asked for its stage as well: a connection that is open, or on
+			// its way up, is the one this connection will use. Then it is
+			// claimed as for "busy" above (probed before it is trusted), and
+			// nothing is said of another program.
+			TInt stage = NifOpen() ? NifStage() : -1;
+			if (NifActive() == 1 || StageIsOpen(stage) || (stage >= EStartingSelection && stage <= EFinishedLogIn))
+				{
+				Say(StageIsOpen(stage) || NifActive() == 1
+					? "  Serial port busy - the Internet connection is up already.\r\n"
+					: "  Serial port busy - the Internet connection is starting.\r\n");
+				LinkLogNum("serial port held (access denied) by the Psion's own Internet connection: claimed, stage ", stage);
+				gClaimUp = 1;
+				}
+			else
+				{
+				LinkLogNum("serial port held (access denied) and NIFMAN has no link: another program, stage ", stage);
+				Say("  The serial port is in use by another program - trying anyway.\r\n");
+				}
+			}
 		else
 			Say("  Could not open the serial port to start PPP - trying anyway.\r\n");
 		return 0;
