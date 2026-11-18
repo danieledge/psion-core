@@ -668,7 +668,7 @@ TInt PmCardSync::Run(RFs& aFs, const TDesC& aDir, TBool aCopyExisting, MPmCalObs
 			sum.AppendFormat(_L("; %d changed on both: the Psion's kept"), pass->iKept);
 		if (pass->iGuarded)
 			sum.Append(_L("; many gone from the server - none removed"));
-		aSummary.Copy(sum.Left(aSummary.MaxLength()));
+		aSummary.Copy(sum.Left(Min(sum.Length(), aSummary.MaxLength())));
 		aPushed = pass->iSent > 0;
 		}
 	else if (err == KErrNotFound)

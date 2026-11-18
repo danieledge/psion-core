@@ -1933,7 +1933,7 @@ void CPmCalSync::FinishL()
 	Close();
 	Reset();
 	iPhase = EIdle;
-	iObserver.CalSyncDone(KErrNone, msg.Left(120), pushed && iSent > 0);
+	iObserver.CalSyncDone(KErrNone, msg.Left(Min(msg.Length(), 120)), pushed && iSent > 0);
 	}
 
 // ---------------------------------------------------------------- a new entry
