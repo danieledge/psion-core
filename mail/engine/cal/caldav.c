@@ -49,7 +49,8 @@ typedef struct
 	{
 	char id[12];
 	int sync;
-	char ctag[100];
+	char ctag[100];          /* the ctag its events in events.txt are from */
+	char newctag[100];       /* the server's, this sync: ctag once its events are saved */
 	char href[200];
 	char flags[8];
 	char name[64];
@@ -196,6 +197,8 @@ typedef struct
 	char ctag[100];
 	char color[16];          /* calendar-color, "#RRGGBB" or "#RRGGBBAA" */
 	int is_cal, vevent, vtodo, comps, writable;
+	int whole;               /* the multistatus ended: the answer is all there */
+	int truncated;           /* the server cut its own list short (507) */
 	int got_data;
 	int ndata;
 	/* discovery */
@@ -210,6 +213,24 @@ typedef struct
 static Dav *g_dav;
 
 static void sink(const char *data, int n, void *ctx) { xs_feed(&((Dav *)ctx)->x, data, n); }
+
+/* (every list's end handler) a list is only used whole: its multistatus
+   ended, and the server did not say it left some out (507, RFC 4918 and
+   RFC 6578's truncated results). A cut list read as whole had calendars
+   and events "gone from the server", and their Agenda entries deleted */
+static void note_whole(Dav *d, const char *name, const char *text)
+{
+	if (!strcmp(name, "multistatus")) d->whole = 1;
+	else if (!strcmp(name, "status") && pm_stristr(text, " 507")) d->truncated = 1;
+}
+
+static int not_whole(Dav *d, const char *what, char *why, int whymax)
+{
+	if (d->whole && !d->truncated) return 0;
+	pm_log("caldav: %s: the list is not whole (%s)", what, d->truncated ? "507" : "no end");
+	snprintf(why, whymax, "The calendar server's answer was cut short");
+	return 1;
+}
 
 static int propfind(const char *path, int depth, const char *props, Dav *d, XsEnd end,
                     HttpResp *r, char *why, int whymax)
@@ -283,6 +304,7 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 	Dav *d = (Dav *)ctx;
 	char t[200];
 	(void)len;
+	note_whole(d, name, text);
 	if (!strcmp(name, "href") && !strcmp(xs_parent(x, 1), "response")) {
 		pm_copy(t, text, sizeof(t)); trim(t);
 		just_path(t, d->href, sizeof(d->href));
@@ -309,7 +331,10 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 			if (c) {
 				c->seen = 1;
 				if (strcmp(c->ctag, d->ctag) || !d->ctag[0]) c->fetch = 1;
-				pm_copy(c->ctag, d->ctag, sizeof(c->ctag));
+				/* (kept aside: saved as its ctag only once its events are
+				   in events.txt. Saved here, one dropped fetch said "No
+				   calendar changes" for ever) */
+				pm_copy(c->newctag, d->ctag, sizeof(c->newctag));
 				pm_copy(c->name, d->name[0] ? d->name : "Calendar", sizeof(c->name));
 				c->flags[0] = 0;
 				if (d->writable) strcat(c->flags, "W");
@@ -346,6 +371,7 @@ static int list_calendars(char *why, int whymax)
 		else snprintf(why, whymax, "The calendar server said %d", r.status);
 		return CAL_RES_FAILED;
 	}
+	if (not_whole(g_dav, "the calendars", why, whymax)) return CAL_RES_FAILED;
 	/* calendars that have gone */
 	for (i = 0; i < g_ncal; ) {
 		if (!g_cal[i].seen) { g_cal[i] = g_cal[--g_ncal]; continue; }
@@ -460,6 +486,7 @@ static void report_end(XmlScan *x, const char *name, const char *text, int len, 
 {
 	Dav *d = (Dav *)ctx;
 	char t[200];
+	note_whole(d, name, text);
 	if (!strcmp(name, "href") && !strcmp(xs_parent(x, 1), "response")) {
 		pm_copy(t, text, sizeof(t)); trim(t);
 		just_path(t, d->href, sizeof(d->href));
@@ -551,6 +578,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 		body, n, &r, sink, g_dav, why, whymax);
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", c->name, r.status); return CAL_RES_FAILED; }
+	if (not_whole(g_dav, c->name, why, whymax)) return CAL_RES_FAILED;
 	pm_log("caldav: %s: %d events", c->name, g_dav->count);
 	if (g_t.series && g_nseries) {
 		/* (PsiSync) the series' masters, unexpanded, eight at a time */
@@ -579,6 +607,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 				body, n, &r, sink, g_dav, why, whymax);
 			g_master_report = 0;
 			if (res != CAL_RES_OK) return res;
+			if (r.status == 207 && not_whole(g_dav, c->name, why, whymax)) return CAL_RES_FAILED;
 			events = g_dav->count;
 		}
 		pm_log("caldav: %s: %d series asked for", c->name, g_nseries);
@@ -605,6 +634,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 		g_todo_report = 0;
 		if (res != CAL_RES_OK) return res;
 		if (r.status != 207) { snprintf(why, whymax, "Could not read %s's to-dos (%d)", c->name, r.status); return CAL_RES_FAILED; }
+		if (not_whole(g_dav, c->name, why, whymax)) return CAL_RES_FAILED;
 		pm_log("caldav: %s: %d to-dos", c->name, g_dav->count - events);
 	}
 	return CAL_RES_OK;
@@ -922,9 +952,7 @@ static int sync_now(int list_only, char *why, int whymax)
 		if (res != CAL_RES_OK) {
 			fclose(out);
 			remove(tmp);
-			/* forget the ctags so the next sync fetches again */
-			for (i = 0; i < g_ncal; i++) if (g_cal[i].fetch) g_cal[i].ctag[0] = 0;
-			save_cals();
+			/* (the ctags were not moved on: the next sync fetches again) */
 			return res;
 		}
 		total += g_dav->count;
@@ -935,6 +963,8 @@ static int sync_now(int list_only, char *why, int whymax)
 		pm_write_why(why, whymax, "the calendar", path);
 		return CAL_RES_FAILED;
 	}
+	/* the events are saved: now the ctags they are from */
+	for (i = 0; i < g_ncal; i++) if (g_cal[i].sync && g_cal[i].fetch) pm_copy(g_cal[i].ctag, g_cal[i].newctag, sizeof(g_cal[i].ctag));
 	save_cals();
 	st_changed();
 	if (fetched) snprintf(why, whymax, "%s%d event%s", sent ? "Sent changes; " : "", total, total == 1 ? "" : "s");

@@ -37,7 +37,8 @@ typedef struct
 	{
 	char id[12];
 	int sync;
-	char ctag[100];
+	char ctag[100];          /* the ctag its cards in index.txt are from */
+	char newctag[100];       /* the server's, this sync: ctag once its cards are saved */
 	char href[200];
 	char flags[8];
 	char name[64];
@@ -252,12 +253,30 @@ typedef struct
 	XmlScan x;
 	char href[200], etag[80], name[64], ctag[100];
 	int is_book, writable, got_data, ndata;
+	int whole, truncated;    /* the multistatus ended; the server left some out (507) */
 	char principal[200], home[200];
 	int count;
 	} Dav;
 static Dav *g_dav;
 
 static void sink(const char *data, int n, void *ctx) { xs_feed(&((Dav *)ctx)->x, data, n); }
+
+/* (every list's end handler) a list is only used whole: its multistatus
+   ended and the server did not say it left some out (507). A cut list read
+   as whole had cards "gone from the server", and their contacts deleted */
+static void note_whole(Dav *d, const char *name, const char *text)
+{
+	if (!strcmp(name, "multistatus")) d->whole = 1;
+	else if (!strcmp(name, "status") && pm_stristr(text, " 507")) d->truncated = 1;
+}
+
+static int not_whole(const char *what, char *why, int whymax)
+{
+	if (g_dav->whole && !g_dav->truncated) return 0;
+	pm_log("carddav: %s: the list is not whole (%s)", what, g_dav->truncated ? "507" : "no end");
+	snprintf(why, whymax, "The contacts server's answer was cut short");
+	return 1;
+}
 
 static int propfind(const char *path, int depth, const char *props, XsEnd end, HttpResp *r, char *why, int whymax)
 {
@@ -323,6 +342,7 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 {
 	Dav *d = (Dav *)ctx;
 	char t[200];
+	note_whole(d, name, text);
 	if (!strcmp(name, "href") && !strcmp(xs_parent(x, 1), "response")) {
 		pm_copy(t, text, sizeof(t)); trim(t);
 		just_path(t, d->href, sizeof(d->href));
@@ -344,7 +364,9 @@ static void list_end(XmlScan *x, const char *name, const char *text, int len, vo
 			if (b) {
 				b->seen = 1;
 				if (strcmp(b->ctag, d->ctag) || !d->ctag[0]) b->fetch = 1;
-				pm_copy(b->ctag, d->ctag, sizeof(b->ctag));
+				/* (saved as its ctag only once its cards are: saved here,
+				   one dropped fetch said "No contact changes" for ever) */
+				pm_copy(b->newctag, d->ctag, sizeof(b->newctag));
 				pm_copy(b->name, d->name[0] ? d->name : "Contacts", sizeof(b->name));
 				b->flags[0] = 0;
 				if (d->writable) strcat(b->flags, "W");
@@ -377,6 +399,7 @@ static int list_books(char *why, int whymax)
 		snprintf(why, whymax, "The contacts server said %d", r.status);
 		return CAL_RES_FAILED;
 	}
+	if (not_whole("the address books", why, whymax)) return CAL_RES_FAILED;
 	for (i = 0; i < g_nbook; ) {
 		if (!g_book[i].seen) { g_book[i] = g_book[--g_nbook]; continue; }
 		i++;
@@ -410,6 +433,7 @@ static void etags_end(XmlScan *x, const char *name, const char *text, int len, v
 	Dav *d = (Dav *)ctx;
 	char t[200];
 	(void)len;
+	note_whole(d, name, text);
 	if (!strcmp(name, "href") && !strcmp(xs_parent(x, 1), "response")) {
 		pm_copy(t, text, sizeof(t)); trim(t);
 		just_path(t, d->href, sizeof(d->href));
@@ -427,8 +451,10 @@ static void etags_end(XmlScan *x, const char *name, const char *text, int len, v
 			}
 			if (c) {
 				c->seen = 1;
+				/* (its ETag moves on when its card is saved, in multi_end:
+				   taken from this list, a card whose fetch was cut was
+				   never asked for again) */
 				if (strcmp(c->etag, d->etag) || !d->etag[0]) c->want = 1;
-				pm_copy(c->etag, d->etag, sizeof(c->etag));
 			}
 		}
 		d->href[0] = d->etag[0] = 0;
@@ -441,6 +467,7 @@ static void multi_end(XmlScan *x, const char *name, const char *text, int len, v
 {
 	Dav *d = (Dav *)ctx;
 	char t[200];
+	note_whole(d, name, text);
 	if (!strcmp(name, "href") && !strcmp(xs_parent(x, 1), "response")) {
 		pm_copy(t, text, sizeof(t)); trim(t);
 		just_path(t, d->href, sizeof(d->href));
@@ -459,13 +486,16 @@ static void multi_end(XmlScan *x, const char *name, const char *text, int len, v
 			char path[200];
 			static char v21[16384];
 			int m = vc_to_psion(g_data, d->ndata, v21, sizeof(v21));
+			int bad;
 			card_file(c->href, "vcf", path, sizeof(path));
-			write_file(path, g_data, d->ndata);
+			bad = write_file(path, g_data, d->ndata) != 0;
 			card_file(c->href, "v21", path, sizeof(path));
-			if (m > 0) write_file(path, v21, m);
+			if (m > 0) bad |= write_file(path, v21, m) != 0;
 			else remove(path);
 			c->hash = vc_psion_hash(g_data, d->ndata);
-			if (d->etag[0]) pm_copy(c->etag, d->etag, sizeof(c->etag));
+			/* the card is saved: its ETag (none, or not saved: "", so the
+			   next sync asks again) */
+			pm_copy(c->etag, bad ? "" : d->etag, sizeof(c->etag));
 			c->want = 0;
 			d->count++;
 		}
@@ -486,6 +516,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 	res = propfind(b->href, 1, "<D:resourcetype/><D:getetag/>", etags_end, &r, why, whymax);
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", b->name, r.status); return CAL_RES_FAILED; }
+	if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
 	/* cards gone from the server */
 	for (i = 0; i < g_ncard; ) {
 		Card *c = &g_card[i];
@@ -520,6 +551,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 			body, n, &r, sink, g_dav, why, whymax);
 		if (res != CAL_RES_OK) return res;
 		if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", b->name, r.status); return CAL_RES_FAILED; }
+		if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
 		*count += g_dav->count;
 		pm_progress("Fetching %s (%d)...", b->name, *count);
 	}
@@ -676,12 +708,11 @@ static int sync_now(int list_only, char *why, int whymax)
 	if (res != CAL_RES_OK) return res;
 	for (i = 0; i < g_nbook; i++) {
 		Book *b = &g_book[i];
-		int k;
 		if (!b->sync || !b->fetch) continue;
 		res = fetch_book(b, &total, why, whymax);
 		if (res != CAL_RES_OK) {
-			for (k = 0; k < g_nbook; k++) if (g_book[k].fetch) g_book[k].ctag[0] = 0;
-			save_books();
+			/* (the ctags were not moved on: the next sync lists the books
+			   again, and asks for the cards whose ETags are not yet saved) */
 			save_index();                    /* (what came in so far is kept) */
 			return res;
 		}
@@ -692,7 +723,10 @@ static int sync_now(int list_only, char *why, int whymax)
 		if (!book_by_id(g_card[i].book)) { g_card[i] = g_card[--g_ncard]; continue; }
 		i++;
 	}
-	if (save_index() != 0 || save_books() != 0) { pm_write_why(why, whymax, "the contacts", g_dir); return CAL_RES_FAILED; }
+	if (save_index() != 0) { pm_write_why(why, whymax, "the contacts", g_dir); return CAL_RES_FAILED; }
+	/* the cards are saved: now the ctags they are from */
+	for (i = 0; i < g_nbook; i++) if (g_book[i].sync && g_book[i].fetch) pm_copy(g_book[i].ctag, g_book[i].newctag, sizeof(g_book[i].ctag));
+	if (save_books() != 0) { pm_write_why(why, whymax, "the contacts", g_dir); return CAL_RES_FAILED; }
 	if (fetched) snprintf(why, whymax, "%s%d contact%s changed", sent ? "Sent changes; " : "", total, total == 1 ? "" : "s");
 	else snprintf(why, whymax, sent ? "Sent %d change%s" : "No contact changes", sent, sent == 1 ? "" : "s");
 	return CAL_RES_OK;
