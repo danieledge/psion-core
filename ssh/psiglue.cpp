@@ -3165,6 +3165,64 @@ extern "C" const char* pg_home()
 	return (gShared && gShared->home[0]) ? gShared->home : "C:\\System\\Apps\\PsiTerm";
 	}
 
+// ---------------------------------------------------------------------------
+// Work memory (psiwork.h): the big buffers an engine needs only while it is
+// connected or syncing. Each is a chunk of its own, so giving it back gives
+// its pages back to the Psion at once (a cell freed in the heap stays
+// committed until the heap is compressed, and often after: EPOC's heap only
+// shrinks from its top). Zeroed. A static of the same size cost its RAM
+// from the engine's start to its end.
+const TInt KPgWorkMax = 12;
+static TInt gWork[KPgWorkMax];              // (handles: no objects with constructors here)
+static TUint8* gWorkBase[KPgWorkMax];
+static TInt gWorkSize[KPgWorkMax];
+
+extern "C" void* pg_work_alloc(unsigned long aBytes)
+	{
+	if (aBytes == 0 || aBytes > 0x1000000)
+		return 0;
+	for (TInt i = 0; i < KPgWorkMax; i++)
+		{
+		if (gWorkBase[i])
+			continue;
+		TInt size = (TInt)((aBytes + 4095) & ~4095UL);
+		RChunk c;
+		if (c.CreateLocal(size, size) != KErrNone)
+			return 0;
+		gWork[i] = c.Handle();
+		gWorkBase[i] = c.Base();
+		gWorkSize[i] = size;
+		Mem::FillZ(gWorkBase[i], size);
+		return gWorkBase[i];
+		}
+	return 0;
+	}
+
+extern "C" void pg_work_free(void* aPtr)
+	{
+	if (!aPtr)
+		return;
+	for (TInt i = 0; i < KPgWorkMax; i++)
+		if (gWorkBase[i] == (TUint8*)aPtr)
+			{
+			Mem::FillZ(gWorkBase[i], gWorkSize[i]);   // (it may have held keys or mail)
+			RChunk c;
+			c.SetHandle(gWork[i]);
+			c.Close();
+			gWork[i] = 0;
+			gWorkBase[i] = 0;
+			gWorkSize[i] = 0;
+			return;
+			}
+	}
+
+// the engine's heap given back as far as it will go (after a sync or a
+// connection: what malloc took and free returned)
+extern "C" void pg_work_trim(void)
+	{
+	User::Heap().Compress();
+	}
+
 #endif // PG_LINK_TEST_ONLY
 
 // ----- Connection settings > Test (0.74) ------------------------------------

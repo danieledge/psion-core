@@ -35,6 +35,12 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
    see from one it would not */
 unsigned long vc_psion_hash(const char *in, int len);
 
+/* the three above work in 194 KB of work memory (psiwork.h), taken at the
+   first call (which fails, -1 or 0, if there is none). vc_work(0) gives it
+   back when the sync or the import is over; vc_work(1) takes it ahead:
+   0, or -1 if there is not enough memory */
+int vc_work(int on);
+
 /* ---- CardDAV (carddav.c): like cal_sync, the address books' changes
    fetched and the Psion's sent; files in calp_dir()'s card\ (carddav.c) */
 int  card_sync(int list_only, char *why, int whymax);

@@ -59,7 +59,6 @@ typedef struct
 	int fetch;               /* events to be fetched this time */
 	} Cal;
 
-static Cal g_cal[MAX_CALS];
 static int g_ncal;
 static char g_home[200];
 static char g_where[200];            /* host+path the list came from */
@@ -70,6 +69,28 @@ static char *g_text;                 /* XML element text (calendar data can be b
 #define TEXT_MAX (160 * 1024)
 static char *g_obj;                  /* a calendar object being changed */
 #define OBJ_MAX (128 * 1024)
+
+/* What a sync works in is work memory (psiwork.h): taken by cal_sync and
+   given back to the Psion when it ends. The lists were statics (32 KB of
+   the program's RAM all day) and the two buffers came from the heap, which
+   kept them (EPOC's heap does not shrink by itself). */
+#include "../../../ssh/psiwork.h"
+#define MAX_SERIES 48
+#define MAX_TOUCHED 32
+typedef struct
+	{
+	Cal cal[MAX_CALS];
+	char series[MAX_SERIES][200];        /* hrefs whose masters are to be asked for */
+	char series_etag[MAX_SERIES][80];
+	char touched[MAX_TOUCHED][200];
+	char text[TEXT_MAX];
+	char obj[OBJ_MAX];
+	} CalWork;
+static CalWork *g_cw;
+#define g_cal         (g_cw->cal)
+#define g_series      (g_cw->series)
+#define g_series_etag (g_cw->series_etag)
+#define g_touched     (g_cw->touched)
 
 /* ------------------------------------------------------------ helpers */
 
@@ -459,9 +480,6 @@ static int g_todo_report;      /* the report being read is of to-dos */
 
 /* (PsiSync) series seen in this calendar's report: their masters are asked
    for afterwards, unexpanded, to give the Agenda a repeat */
-#define MAX_SERIES 48
-static char g_series[MAX_SERIES][200];
-static char g_series_etag[MAX_SERIES][80];
 static int g_nseries;
 
 static void note_series(const char *href, const char *etag)
@@ -650,8 +668,6 @@ static void body_to_obj(const char *data, int n, void *ctx)
 }
 
 /* resources changed earlier in this batch: their etags have moved on */
-#define MAX_TOUCHED 32
-static char g_touched[MAX_TOUCHED][200];
 static int g_ntouched;
 
 static int touched(const char *href)
@@ -890,10 +906,16 @@ static int sync_now(int list_only, char *why, int whymax);
 /* the buffers are only needed while syncing */
 int cal_sync(int list_only, char *why, int whymax)
 {
-	int r = sync_now(list_only, why, whymax);
-	free(g_text); g_text = 0;
-	free(g_obj); g_obj = 0;
-	free(g_dav); g_dav = 0;
+	int r;
+	if (!g_cw) g_cw = (CalWork *)psi_work_alloc(sizeof(CalWork) + sizeof(Dav));   /* (still there: the last sync was abandoned) */
+	if (!g_cw) { snprintf(why, whymax, "Not enough memory for the calendar"); return CAL_RES_FAILED; }
+	g_text = g_cw->text;
+	g_obj = g_cw->obj;
+	g_dav = (Dav *)(g_cw + 1);
+	r = sync_now(list_only, why, whymax);
+	g_text = 0; g_obj = 0; g_dav = 0;
+	psi_work_free(g_cw); g_cw = 0;
+	psi_work_trim();                     /* (and what the objects took from the heap) */
 	return r;
 }
 
@@ -914,10 +936,6 @@ static int sync_now(int list_only, char *why, int whymax)
 	if (!pass[0]) { snprintf(why, whymax, "Password needed for the calendar"); return CAL_RES_NEED_PASS; }
 	snprintf(g_dir, sizeof(g_dir), "%scal%s", calp_dir(), CAL_SEP);
 	pm_mkdir(g_dir);
-	if (!g_text) g_text = (char *)malloc(TEXT_MAX);
-	if (!g_obj) g_obj = (char *)malloc(OBJ_MAX);
-	if (!g_dav) g_dav = (Dav *)malloc(sizeof(Dav));
-	if (!g_text || !g_obj || !g_dav) { snprintf(why, whymax, "Not enough memory for the calendar"); return CAL_RES_FAILED; }
 
 	http_target(g_t.host, g_t.port ? g_t.port : 443, g_t.tls, g_t.user, pass);
 	snprintf(g_where, sizeof(g_where), "%s%s", g_t.host, g_t.path);

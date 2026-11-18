@@ -205,17 +205,56 @@ static void params21(int kind, int t, char *out, int max)
 #undef ADD
 }
 
+/* a property of the Psion's card, ready to compare and write */
+typedef struct
+	{
+	int kind;
+	int types;
+	char value[VLINE];       /* cp1252, components joined by ';' (a ';' in one escaped) */
+	} PsProp;
+
+/* What the functions here work in: 194 KB, which were statics (the stack
+   is too small for them) and so part of psisync.exe's RAM all day. Now work
+   memory (psiwork.h): taken at the first use, given back by vc_work(0)
+   when the sync or the import is over. */
+#include "../../../ssh/psiwork.h"
+typedef struct
+	{
+	char tp_line[VLINE], tp_val[VLINE], tp_pr[80], tp_fn[VLINE];   /* vc_to_psion */
+	char hash_tmp[16384];                                          /* vc_psion_hash */
+	char rp_line[VLINE];                                           /* read_psion */
+	char sk_tmp[16384];                                            /* same_kind */
+	PsProp sk_mine[MAXP];
+	PsProp mg_ps[MAXP];                                            /* vc_merge */
+	char mg_line[VLINE];
+	PsProp mg_f;
+	} VcWork;
+static VcWork *g_vw;
+
+int vc_work(int on)
+{
+	if (on) {
+		if (!g_vw) g_vw = (VcWork *)psi_work_alloc(sizeof(VcWork));
+		return g_vw ? 0 : -1;
+	}
+	if (g_vw) { psi_work_free(g_vw); g_vw = 0; }
+	return 0;
+}
+
+#define line (g_vw->tp_line)
+#define val  (g_vw->tp_val)
+#define pr   (g_vw->tp_pr)
+#define fn   (g_vw->tp_fn)
 int vc_to_psion(const char *in, int len, char *out, int max)
 {
-	static char line[VLINE], val[VLINE], pr[80];
 	Buf o;
 	int pos = 0, n, in_card = 0, is21 = 0, got = 0;
 	Prop p;
+	int have_n = 0;
 	o.b = out; o.n = 0; o.max = max; o.bad = 0;
 	if (max < 2) return -1;
 	out[0] = 0;
-	static char fn[VLINE];
-	int have_n = 0;
+	if (vc_work(1) != 0) return -1;
 	fn[0] = 0;
 	while ((n = ics_line(in, len, &pos, line, sizeof(line))) >= 0) {
 		int kind, qp;
@@ -286,11 +325,18 @@ int vc_to_psion(const char *in, int len, char *out, int max)
 	return o.n;
 }
 
+#undef line
+#undef val
+#undef pr
+#undef fn
+
+#define tmp (g_vw->hash_tmp)
 unsigned long vc_psion_hash(const char *in, int len)
 {
-	static char tmp[16384];
 	unsigned long h = 2166136261UL;
-	int n = vc_to_psion(in, len, tmp, sizeof(tmp)), i;
+	int n, i;
+	if (vc_work(1) != 0) return 0;
+	n = vc_to_psion(in, len, tmp, sizeof(tmp));
 	if (n < 0) return 0;
 	for (i = 0; i < n; i++) {
 		if (tmp[i] == '\r' || tmp[i] == '\n') continue;
@@ -299,21 +345,14 @@ unsigned long vc_psion_hash(const char *in, int len)
 	}
 	return h;
 }
+#undef tmp
 
 /* ---------------------------------------------------------------- back to the server */
 
-/* a property of the Psion's card, ready to compare and write */
-typedef struct
-	{
-	int kind;
-	int types;
-	char value[VLINE];       /* cp1252, components joined by ';' (a ';' in one escaped) */
-	} PsProp;
-
 /* the Psion's 2.1 card read (QP decoded, cp1252) */
+#define line (g_vw->rp_line)
 static int read_psion(const char *in, int len, PsProp *out, int max)
 {
-	static char line[VLINE];
 	int pos = 0, n, k = 0;
 	Prop p;
 	while ((n = ics_line(in, len, &pos, line, sizeof(line))) >= 0 && k < max) {
@@ -339,6 +378,7 @@ static int read_psion(const char *in, int len, PsProp *out, int max)
 	}
 	return k;
 }
+#undef line
 
 /* cp1252 component text -> a 3.0/4.0 TEXT value in UTF-8 (escaped) */
 static void text30(const char *cp, int split, char *out, int max)
@@ -424,10 +464,10 @@ static void write30(Buf *o, const PsProp *pp, int v4)
 
 /* the server card's properties of one kind, read as the Psion's would be,
    to see whether the Psion changed that kind */
+#define tmp  (g_vw->sk_tmp)
+#define mine (g_vw->sk_mine)
 static int same_kind(const char *orig, int olen, const PsProp *ps, int nps, int kind)
 {
-	static char tmp[16384];
-	static PsProp mine[MAXP];
 	int n = vc_to_psion(orig, olen, tmp, sizeof(tmp)), m, i, j, a = 0, b = 0;
 	if (n < 0) return 0;
 	m = read_psion(tmp, n, mine, MAXP);
@@ -443,6 +483,8 @@ static int same_kind(const char *orig, int olen, const PsProp *ps, int nps, int 
 	}
 	return 1;
 }
+#undef tmp
+#undef mine
 
 /* FN from the Psion's N ("family;given;middle;prefix;suffix"): "given family" */
 static int fn_from_n(const PsProp *ps, int nps, PsProp *fn)
@@ -460,17 +502,20 @@ static int fn_from_n(const PsProp *ps, int nps, PsProp *fn)
 	return fn->value[0] != 0;
 }
 
+#define ps   (g_vw->mg_ps)
+#define line (g_vw->mg_line)
+#define f    (g_vw->mg_f)
 int vc_merge(const char *orig, int olen, const char *psion, int plen, const char *uid, char *out, int max)
 {
-	static PsProp ps[MAXP];
-	static char line[VLINE];
 	char keep[NKINDS], groups[16][24];
-	int nps = read_psion(psion, plen, ps, MAXP), i, n, pos = 0, v4 = 0, ng = 0, has_fn = 0;
+	int nps, i, n, pos = 0, v4 = 0, ng = 0, has_fn = 0;
 	Buf o;
 	Prop p;
 	o.b = out; o.n = 0; o.max = max; o.bad = 0;
 	if (max < 2) return -1;
 	out[0] = 0;
+	if (vc_work(1) != 0) return -1;
+	nps = read_psion(psion, plen, ps, MAXP);
 	if (!orig || olen <= 0 || !orig[0]) {
 		/* a new card, 3.0 */
 		char l[200];
@@ -480,7 +525,6 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
 		for (i = 0; i < nps; i++) { write30(&o, &ps[i], 0); if (ps[i].kind == 1) has_fn = 1; }
 		if (!has_fn) {
 			/* FN is required: from N, else a placeholder */
-			static PsProp f;
 			if (!fn_from_n(ps, nps, &f)) { f.kind = 1; f.types = 0; pm_copy(f.value, "(no name)", sizeof(f.value)); }
 			write30(&o, &f, 0);
 		}
@@ -529,3 +573,6 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
 	}
 	return o.bad ? -1 : o.n;
 }
+#undef ps
+#undef line
+#undef f

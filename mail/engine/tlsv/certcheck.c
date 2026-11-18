@@ -56,7 +56,11 @@ typedef struct
 	const unsigned char *san; int sanlen;        /* subjectAltName GeneralNames */
 	} Cert;
 
-static unsigned char g_chain[CHAIN_MAX];
+/* the chain as it came: work memory (psiwork.h), held from the Certificate
+   message to CertificateVerify, not for as long as the program runs */
+#include "../../../ssh/psiwork.h"
+static unsigned char *g_chain;
+static void chain_free(void) { if (g_chain) { psi_work_free(g_chain); g_chain = 0; } }
 static Cert g_cert[MAX_CERTS];
 static int g_ncert;
 static int g_proved;             /* CertificateVerify checked */
@@ -79,6 +83,7 @@ const char *tlsv_problem(void) { return g_problem; }
 
 void tlsv_start(void)
 {
+	chain_free();
 	g_ncert = 0;
 	g_proved = 0;
 	g_trusted = 0;
@@ -524,6 +529,7 @@ const char *tlsv_certificate(const unsigned char *msg, int len)
 	char hp[100];
 	long now;
 	g_ncert = 0;
+	if (!g_chain && !(g_chain = (unsigned char *)psi_work_alloc(CHAIN_MAX))) return "Not enough memory";
 	if (len < 4) return "bad certificate message";
 	ctx = *p++;
 	if (ctx > end - p) return "bad certificate message";
@@ -567,7 +573,7 @@ const char *tlsv_certificate(const unsigned char *msg, int len)
 	return 0;
 }
 
-const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char th[32])
+static const char *verify1(const unsigned char *msg, int len, const unsigned char th[32])
 {
 	static unsigned char content[64 + 34 + 32];
 	int alg, sl;
@@ -597,4 +603,13 @@ const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char t
 	}
 	g_proved = 1;
 	return 0;
+}
+
+/* (the chain is done with once the server has proved it holds the key) */
+const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char th[32])
+{
+	const char *e = verify1(msg, len, th);
+	chain_free();
+	g_ncert = 0;
+	return e;
 }

@@ -263,6 +263,13 @@ void pwn_close(int hangup)
 {
 	if (g_open && hangup)
 		pg_hangup();
+#ifndef PW_NO_TLS
+	/* the connection is over either way (nothing reads or writes once
+	   g_open is 0): its keys go, and TLS's buffers back to the Psion */
+	if (g_tls)
+		tls_close();
+#endif
+	g_tls = 0;
 	g_open = 0;
 	g_dead = 0;
 }

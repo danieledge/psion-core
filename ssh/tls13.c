@@ -154,8 +154,21 @@ void tls_forget(void)
 }
 #endif
 
-static unsigned char g_rec[REC_MAX];     /* one record being read */
-static unsigned char g_app[16384 + 256]; /* decrypted application data */
+/* The connection's buffers are work memory (psiwork.h): taken by
+   tls_connect, given back by tls_close. They were statics, 66 KB (71 KB with
+   the tickets) of each program's RAM whether it was connected or not. */
+#include "psiwork.h"
+typedef struct {
+	unsigned char rec[REC_MAX];              /* one record being read */
+	unsigned char app[16384 + 256];          /* decrypted application data */
+	unsigned char out[5 + 16384 + 1 + 16];   /* one record being sent */
+	unsigned char hs[HS_MAX];                /* handshake bytes not yet parsed */
+} tls_work;
+static tls_work *g_w;
+#define g_rec (g_w->rec)
+#define g_app (g_w->app)
+#define g_out (g_w->out)
+#define g_hs  (g_w->hs)
 static int g_app_pos, g_app_len;
 static int g_closed;
 /* how the connection's reading ended (tls_end): 2 the server's close_notify,
@@ -488,12 +501,12 @@ static int read_record(int *len, int timeout_ms)
 	}
 }
 
-static unsigned char g_out[5 + 16384 + 1 + 16];   /* one record being sent */
 
 static int write_record(int type, const unsigned char *data, int len)
 {
-	unsigned char *out = g_out;
-	if (len > 16384) return -1;
+	unsigned char *out;
+	if (!g_w || len > 16384) return -1;     /* (no connection: after tls_close) */
+	out = g_out;
 	if (!g_encrypted) {
 		out[0] = (unsigned char)type; out[1] = 3; out[2] = (type == 22) ? 1 : 3;
 		out[3] = (unsigned char)(len >> 8); out[4] = (unsigned char)len;
@@ -514,15 +527,13 @@ static int write_record(int type, const unsigned char *data, int len)
 static void put16(unsigned char *p, int v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)v; }
 
 /* Forgets the connection: the traffic keys, and every buffer that held
-   plaintext or key material. Called after each connection by the users of
+   plaintext or key material (the buffers go back to the Psion). Called after each connection by the users of
    this file, and by tls_connect before the next one. */
 void tls_close(void)
 {
 	memset(&g_rd, 0, sizeof(g_rd));
 	memset(&g_wr, 0, sizeof(g_wr));
-	memset(g_app, 0, sizeof(g_app));
-	memset(g_rec, 0, sizeof(g_rec));
-	memset(g_out, 0, sizeof(g_out));
+	if (g_w) { psi_work_free(g_w); g_w = 0; }   /* (wiped as it goes) */
 	g_encrypted = 0;
 	g_app_pos = g_app_len = 0;
 	g_closed = 1;
@@ -542,7 +553,6 @@ int tls_connect(const char *host, char *why, int whymax)
 #else
 	static unsigned char ch[512];
 #endif
-	static unsigned char hs[HS_MAX];     /* handshake bytes not yet parsed */
 	unsigned char priv[32], pub[32], shared[32], zero[32], secret[32], derived[32];
 	unsigned char hs_secret[32], c_hs[32], s_hs[32], th[32], fin[32], empty_hash[32];
 	unsigned char server_pub[32];
@@ -560,6 +570,13 @@ int tls_connect(const char *host, char *why, int whymax)
 	}
 
 	tls_close();                         /* nothing of the last connection survives */
+	g_w = (tls_work *)psi_work_alloc(sizeof(tls_work));
+	if (!g_w) {
+		g_err = "Not enough memory";
+		g_closed = 1;
+		if (why && whymax > 0) { strncpy(why, g_err, whymax - 1); why[whymax - 1] = 0; }
+		return -1;
+	}
 	g_err = "handshake failed";
 	g_encrypted = 0;
 	g_closed = 0;
@@ -699,53 +716,53 @@ int tls_connect(const char *host, char *why, int whymax)
 		if (type == 21) { g_err = "server refused the connection (TLS alert)"; goto fail; }
 		if (type != 22) { g_err = "unexpected reply (not TLS?)"; goto fail; }
 		if (hlen + len > HS_MAX) { g_err = "handshake too big"; goto fail; }
-		memcpy(hs + hlen, g_rec, len); hlen += len;
+		memcpy(g_hs + hlen, g_rec, len); hlen += len;
 		if (hlen >= 4) {
-			int mlen = (hs[1] << 16) | (hs[2] << 8) | hs[3];
+			int mlen = (g_hs[1] << 16) | (g_hs[2] << 8) | g_hs[3];
 			if (hlen >= 4 + mlen) break;
 		}
 	}
 	{
-		int mlen = (hs[1] << 16) | (hs[2] << 8) | hs[3], p = 4, sid, el, end;
+		int mlen = (g_hs[1] << 16) | (g_hs[2] << 8) | g_hs[3], p = 4, sid, el, end;
 		static const unsigned char hrr[32] = {
 			0xCF,0x21,0xAD,0x74,0xE5,0x9A,0x61,0x11,0xBE,0x1D,0x8C,0x02,0x1E,0x65,0xB8,0x91,
 			0xC2,0xA2,0x11,0x16,0x7A,0xBB,0x8C,0x5E,0x07,0x9E,0x09,0xE2,0xC8,0xA8,0x33,0x9C };
-		if (hs[0] != 2) { g_err = "expected ServerHello"; goto fail; }
+		if (g_hs[0] != 2) { g_err = "expected ServerHello"; goto fail; }
 		if (mlen < 38 || 4 + mlen > hlen) { g_err = "bad ServerHello"; goto fail; }
-		if (!memcmp(hs + 6, hrr, 32)) { g_err = "server wants a different key exchange"; goto fail; }
+		if (!memcmp(g_hs + 6, hrr, 32)) { g_err = "server wants a different key exchange"; goto fail; }
 		p += 2 + 32;
-		sid = hs[p]; p += 1 + sid;
+		sid = g_hs[p]; p += 1 + sid;
 		if (p + 5 > 4 + mlen) { g_err = "bad ServerHello"; goto fail; }
-		g_cipher = (hs[p] << 8) | hs[p + 1];
+		g_cipher = (g_hs[p] << 8) | g_hs[p + 1];
 #ifdef TLS_AES_GCM
 		if (g_cipher != 0x1303 && g_cipher != 0x1301) { g_err = "server chose an unsupported cipher"; goto fail; }
 #else
 		if (g_cipher != 0x1303) { g_err = "server chose an unsupported cipher"; goto fail; }
 #endif
 		p += 3;
-		el = (hs[p] << 8) | hs[p + 1]; p += 2;
+		el = (g_hs[p] << 8) | g_hs[p + 1]; p += 2;
 		end = p + el;
 		if (end > 4 + mlen) goto fail;
 		while (p + 4 <= end) {
-			int et = (hs[p] << 8) | hs[p + 1], elen = (hs[p + 2] << 8) | hs[p + 3];
+			int et = (g_hs[p] << 8) | g_hs[p + 1], elen = (g_hs[p + 2] << 8) | g_hs[p + 3];
 			p += 4;
 			if (p + elen > end) goto fail;
-			if (et == 51 && elen >= 36 && ((hs[p] << 8) | hs[p + 1]) == 0x001d && hs[p + 3] == 32) {
-				memcpy(server_pub, hs + p + 4, 32);
+			if (et == 51 && elen >= 36 && ((g_hs[p] << 8) | g_hs[p + 1]) == 0x001d && g_hs[p + 3] == 32) {
+				memcpy(server_pub, g_hs + p + 4, 32);
 				got_sh = 1;
 			}
-			if (et == 43 && !(elen == 2 && hs[p] == 3 && hs[p + 1] == 4)) { g_err = "server does not speak TLS 1.3"; goto fail; }
+			if (et == 43 && !(elen == 2 && g_hs[p] == 3 && g_hs[p + 1] == 4)) { g_err = "server does not speak TLS 1.3"; goto fail; }
 #ifdef TLS_RESUME
 			if (et == 41) {                  /* the server took our ticket */
-				if (!binders_at || elen != 2 || hs[p] || hs[p + 1]) { g_err = "bad session resumption"; goto fail; }
+				if (!binders_at || elen != 2 || g_hs[p] || g_hs[p + 1]) { g_err = "bad session resumption"; goto fail; }
 				resumed = 1;
 			}
 #endif
 			p += elen;
 		}
 		if (!got_sh) { g_err = "server did not send an X25519 key"; goto fail; }
-		sha256_process(&transcript, hs, 4 + mlen);
-		memmove(hs, hs + 4 + mlen, hlen - 4 - mlen);
+		sha256_process(&transcript, g_hs, 4 + mlen);
+		memmove(g_hs, g_hs + 4 + mlen, hlen - 4 - mlen);
 		hlen -= 4 + mlen;
 		if (hlen) { g_err = "unexpected data after ServerHello"; goto fail; }
 	}
@@ -769,29 +786,29 @@ int tls_connect(const char *host, char *why, int whymax)
 	/* ---- EncryptedExtensions, Certificate, CertificateVerify, Finished */
 	for (;;) {
 		int mt, mlen;
-		while (hlen < 4 || hlen < 4 + ((hs[1] << 16) | (hs[2] << 8) | hs[3])) {
+		while (hlen < 4 || hlen < 4 + ((g_hs[1] << 16) | (g_hs[2] << 8) | g_hs[3])) {
 			type = read_record(&len, 30000);
 			if (type < 0) goto fail;
 			if (type == 21) { g_err = "server refused the connection (TLS alert)"; goto fail; }
 			if (type != 22) { g_err = "unexpected record during handshake"; goto fail; }
 			if (hlen + len > HS_MAX) { g_err = "handshake message too big"; goto fail; }
-			memcpy(hs + hlen, g_rec, len); hlen += len;
+			memcpy(g_hs + hlen, g_rec, len); hlen += len;
 		}
-		mt = hs[0];
-		mlen = (hs[1] << 16) | (hs[2] << 8) | hs[3];
+		mt = g_hs[0];
+		mlen = (g_hs[1] << 16) | (g_hs[2] << 8) | g_hs[3];
 		if (mt == 20) {                                          /* server Finished */
 			tmp = transcript; sha256_done(&tmp, th);
 			hkdf_label(s_hs, "finished", NULL, 0, fkey, 32);
 			hmac_sha256(fkey, 32, th, 32, NULL, 0, fin);
-			if (mlen != 32 || memcmp(fin, hs + 4, 32)) { g_err = "server Finished did not verify"; goto fail; }
+			if (mlen != 32 || memcmp(fin, g_hs + 4, 32)) { g_err = "server Finished did not verify"; goto fail; }
 #ifdef TLS_VERIFY
 #ifdef TLS_RESUME
 			if (!resumed)        /* resumed: proved by the ticket's own connection */
 #endif
 			if (!tlsv_ok()) { g_err = "the server did not prove who it is"; goto fail; }
 #endif
-			sha256_process(&transcript, hs, 4 + mlen);
-			memmove(hs, hs + 4 + mlen, hlen - 4 - mlen);
+			sha256_process(&transcript, g_hs, 4 + mlen);
+			memmove(g_hs, g_hs + 4 + mlen, hlen - 4 - mlen);
 			hlen -= 4 + mlen;
 			break;
 		}
@@ -801,17 +818,17 @@ int tls_connect(const char *host, char *why, int whymax)
 #endif
 #ifdef TLS_VERIFY
 		if (mt == 11) {
-			const char *e = tlsv_certificate(hs + 4, mlen);
+			const char *e = tlsv_certificate(g_hs + 4, mlen);
 			if (e) { g_err = e; goto fail; }
 		} else if (mt == 15) {
 			const char *e;
 			tmp = transcript; sha256_done(&tmp, th);   /* up to the Certificate */
-			e = tlsv_verify(hs + 4, mlen, th);
+			e = tlsv_verify(g_hs + 4, mlen, th);
 			if (e) { g_err = e; goto fail; }
 		}
 #endif
-		sha256_process(&transcript, hs, 4 + mlen);   /* certificate contents not checked - see top */
-		memmove(hs, hs + 4 + mlen, hlen - 4 - mlen);
+		sha256_process(&transcript, g_hs, 4 + mlen);   /* certificate contents not checked - see top */
+		memmove(g_hs, g_hs + 4 + mlen, hlen - 4 - mlen);
 		hlen -= 4 + mlen;
 	}
 
@@ -872,7 +889,7 @@ done:
 #endif
 	memset(&transcript, 0, sizeof(transcript));
 	memset(&tmp, 0, sizeof(tmp));
-	memset(hs, 0, sizeof(hs));
+	if (g_w) memset(g_hs, 0, sizeof(g_hs));
 	memset(ch, 0, sizeof(ch));
 	return ret;
 }
@@ -943,7 +960,7 @@ int tls_read(void *buf, int max, int timeout_ms)
 {
 	while (g_app_pos >= g_app_len) {
 		int type, len;
-		if (g_closed) return 0;
+		if (g_closed || !g_w) return 0;
 		type = read_record(&len, timeout_ms);
 		if (type < 0) {
 			/* server closed the TCP connection without close_notify (or

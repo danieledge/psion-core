@@ -259,6 +259,24 @@ typedef struct
 	} Dav;
 static Dav *g_dav;
 
+/* What a sync works in is work memory (psiwork.h), taken by card_sync and
+   given back when it ends: the buffers below were statics (95 KB of
+   psisync.exe's RAM all day), and the list of cards and the two texts came
+   from the heap, which kept them. */
+#include "../../../ssh/psiwork.h"
+typedef struct
+	{
+	char pf_body[700], pf_hdr[120];              /* propfind */
+	char me_v21[16384];                          /* multi_end */
+	char fb_body[4096];                          /* fetch_book */
+	char po_psion[16384], po_out[CARD_MAX + 4096];   /* push_one */
+	char text[TEXT_MAX];
+	char data[CARD_MAX];
+	Dav dav;
+	Card card[MAX_CARDS];
+	} CardWork;
+static CardWork *g_kw;
+
 static void sink(const char *data, int n, void *ctx) { xs_feed(&((Dav *)ctx)->x, data, n); }
 
 /* (every list's end handler) a list is only used whole: its multistatus
@@ -280,7 +298,8 @@ static int not_whole(const char *what, char *why, int whymax)
 
 static int propfind(const char *path, int depth, const char *props, XsEnd end, HttpResp *r, char *why, int whymax)
 {
-	static char body[700], hdr[120];
+#define body (g_kw->pf_body)
+#define hdr  (g_kw->pf_hdr)
 	int n = snprintf(body, sizeof(body),
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<D:propfind xmlns:D=\"DAV:\" xmlns:A=\"urn:ietf:params:xml:ns:carddav\" "
@@ -289,6 +308,8 @@ static int propfind(const char *path, int depth, const char *props, XsEnd end, H
 	xs_init(&g_dav->x, g_text, TEXT_MAX, end, g_dav);
 	return http_request("PROPFIND", path, hdr, body, n, r, sink, g_dav, why, whymax);
 }
+#undef body
+#undef hdr
 
 static void disc_end(XmlScan *x, const char *name, const char *text, int len, void *ctx)
 {
@@ -484,7 +505,7 @@ static void multi_end(XmlScan *x, const char *name, const char *text, int len, v
 		Card *c = d->href[0] ? card_by_href(d->href) : 0;
 		if (c && d->got_data) {
 			char path[200];
-			static char v21[16384];
+#define v21 (g_kw->me_v21)
 			int m = vc_to_psion(g_data, d->ndata, v21, sizeof(v21));
 			int bad;
 			card_file(c->href, "vcf", path, sizeof(path));
@@ -503,10 +524,11 @@ static void multi_end(XmlScan *x, const char *name, const char *text, int len, v
 		d->got_data = 0;
 	}
 }
+#undef v21
 
 static int fetch_book(Book *b, int *count, char *why, int whymax)
 {
-	static char body[4096];
+#define body (g_kw->fb_body)
 	HttpResp r;
 	int res, i, n, k;
 	pm_progress("Fetching %s...", b->name);
@@ -557,6 +579,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 	}
 	return CAL_RES_OK;
 }
+#undef body
 
 /* ------------------------------------------------------------ changes from the Psion */
 
@@ -574,7 +597,8 @@ static void to_data(const char *d, int n, void *ctx)
 
 static int push_one(char *line, FILE *res, char *why, int whymax)
 {
-	static char psion[16384], out[CARD_MAX + 4096];
+#define psion (g_kw->po_psion)
+#define out   (g_kw->po_out)
 	char *p = line, *op = field(&p), *key = field(&p);
 	char hdr[200], href[260], path[200];
 	HttpResp r;
@@ -643,6 +667,8 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 	}
 	return CAL_RES_OK;
 }
+#undef psion
+#undef out
 
 static int push_changes(int *n, char *why, int whymax)
 {
@@ -735,17 +761,20 @@ static int sync_now(int list_only, char *why, int whymax)
 int card_sync(int list_only, char *why, int whymax)
 {
 	int r;
-	if (!g_text) g_text = (char *)malloc(TEXT_MAX);
-	if (!g_data) g_data = (char *)malloc(CARD_MAX);
-	if (!g_dav) g_dav = (Dav *)malloc(sizeof(Dav));
-	if (!g_card) g_card = (Card *)malloc(sizeof(Card) * MAX_CARDS);
-	if (!g_text || !g_data || !g_dav || !g_card) {
+	if (!g_kw) g_kw = (CardWork *)psi_work_alloc(sizeof(CardWork));
+	if (!g_kw || vc_work(1) != 0) {
 		snprintf(why, whymax, "Not enough memory for the contacts");
 		r = CAL_RES_FAILED;
-	} else r = sync_now(list_only, why, whymax);
-	free(g_text); g_text = 0;
-	free(g_data); g_data = 0;
-	free(g_dav); g_dav = 0;
-	free(g_card); g_card = 0;
+	} else {
+		g_text = g_kw->text;
+		g_data = g_kw->data;
+		g_dav = &g_kw->dav;
+		g_card = g_kw->card;
+		r = sync_now(list_only, why, whymax);
+	}
+	g_text = 0; g_data = 0; g_dav = 0; g_card = 0;
+	psi_work_free(g_kw); g_kw = 0;
+	vc_work(0);
+	psi_work_trim();
 	return r;
 }
