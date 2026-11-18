@@ -649,22 +649,26 @@ TInt PmCardSync::Run(RFs& aFs, const TDesC& aDir, TBool aCopyExisting, MPmCalObs
 	TRAPD(err, pass->RunL(aDir, aCopyExisting));
 	if (err == KErrNone)
 		{
+		// (built whole, then clipped to the caller's room: every part at once
+		// is about 140 letters, and a shorter buffer was USER 11)
+		TBuf<200> sum;
 		if (pass->iAdded || pass->iChanged || pass->iRemoved)
 			{
-			aSummary = _L("Contacts: ");
+			sum = _L("Contacts: ");
 			TBool any = EFalse;
-			if (pass->iAdded) { aSummary.AppendFormat(_L("%d new"), pass->iAdded); any = ETrue; }
-			if (pass->iChanged) { if (any) aSummary.Append(_L(", ")); aSummary.AppendFormat(_L("%d changed"), pass->iChanged); any = ETrue; }
-			if (pass->iRemoved) { if (any) aSummary.Append(_L(", ")); aSummary.AppendFormat(_L("%d removed"), pass->iRemoved); }
+			if (pass->iAdded) { sum.AppendFormat(_L("%d new"), pass->iAdded); any = ETrue; }
+			if (pass->iChanged) { if (any) sum.Append(_L(", ")); sum.AppendFormat(_L("%d changed"), pass->iChanged); any = ETrue; }
+			if (pass->iRemoved) { if (any) sum.Append(_L(", ")); sum.AppendFormat(_L("%d removed"), pass->iRemoved); }
 			}
 		else
-			aSummary = _L("Contacts up to date");
+			sum = _L("Contacts up to date");
 		if (pass->iSent)
-			aSummary.AppendFormat(_L("; sending %d"), pass->iSent);
+			sum.AppendFormat(_L("; sending %d"), pass->iSent);
 		if (pass->iKept)
-			aSummary.AppendFormat(_L("; %d changed on both: the Psion's kept"), pass->iKept);
+			sum.AppendFormat(_L("; %d changed on both: the Psion's kept"), pass->iKept);
 		if (pass->iGuarded)
-			aSummary.Append(_L("; many gone from the server - none removed"));
+			sum.Append(_L("; many gone from the server - none removed"));
+		aSummary.Copy(sum.Left(aSummary.MaxLength()));
 		aPushed = pass->iSent > 0;
 		}
 	else if (err == KErrNotFound)

@@ -1907,7 +1907,11 @@ void CPmCalSync::FinishL()
 		iFs.Delete(path);
 		}
 	TBool pushed = iPush->Count() > 0;
-	TBuf<120> msg;
+	// (every part at once is over 200 letters: in a TBuf<120> a sync with
+	// changes sent, refused and kept, or with the guard's line, was USER 11
+	// - the program gone with no outcome said. Built whole, given clipped
+	// to the 120 the callers have room for.)
+	TBuf<256> msg;
 	if (iAdded || iChangedN || iRemoved)
 		{
 		msg = _L("Agenda: ");
@@ -1929,7 +1933,7 @@ void CPmCalSync::FinishL()
 	Close();
 	Reset();
 	iPhase = EIdle;
-	iObserver.CalSyncDone(KErrNone, msg, pushed && iSent > 0);
+	iObserver.CalSyncDone(KErrNone, msg.Left(120), pushed && iSent > 0);
 	}
 
 // ---------------------------------------------------------------- a new entry
