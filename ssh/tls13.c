@@ -44,6 +44,9 @@ extern int tlsv_ok(void);
 #endif
 
 /* psiglue */
+#include <time.h>
+#include "psishared.h"
+extern PsiShared *pg_shared(void);
 extern int pg_net_avail(void);
 extern int pg_net_read(void *buf, int max);
 extern int pg_serial_write(const void *buf, int len);
@@ -372,6 +375,36 @@ static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned 
 
 /* ---------------------------------------------------------------- raw record I/O */
 
+/* A wait for the server's bytes. pg_wait also ends when the app sets
+   resized (4): PsiWeb.app does that with every key, tap and command, to
+   wake the engine's own wait, and pg_wait then ends at once each time
+   until the engine clears it. So a key in the middle of a record cut the
+   connection ("connection dropped"). Here only data, the link closing (1),
+   quit (8: Stop) or the time end the wait. resized is cleared while it
+   waits and set again before it returns, so the engine's loop still sees
+   the key. */
+static int net_wait(int timeout_ms)
+{
+	PsiShared *s = pg_shared();
+	time_t end = time(NULL) + (timeout_ms + 999) / 1000;
+	int m, woken = 0;
+	for (;;) {
+		m = pg_wait(timeout_ms, 1, 0);
+		if (!s || !(m & 4) || (m & 9) || pg_net_avail() > 0)
+			break;
+		woken = 1;
+		s->resized = 0;
+		if (timeout_ms >= 0) {
+			long left = (long)(end - time(NULL));
+			if (left <= 0) { m = 0; break; }
+			timeout_ms = (int)(left * 1000);
+		}
+	}
+	if (woken)
+		s->resized = 1;
+	return m;
+}
+
 static int read_exact(unsigned char *buf, int n, int timeout_ms)
 {
 	int k = 0;
@@ -388,7 +421,7 @@ static int read_exact(unsigned char *buf, int n, int timeout_ms)
 		}
 #endif
 		if (pg_net_avail() == 0) {
-			int m = pg_wait(timeout_ms, 1, 0);
+			int m = net_wait(timeout_ms);
 			if (m & 8) { g_err = "cancelled"; return -2; }
 			if (pg_net_avail() == 0) { g_err = k ? "connection dropped" : "no reply from server"; return -1; }
 		}
