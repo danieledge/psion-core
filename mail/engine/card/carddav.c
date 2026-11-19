@@ -417,7 +417,7 @@ static int list_books(char *why, int whymax)
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) {
 		if (r.status == 404) { g_home[0] = 0; save_books(); }
-		snprintf(why, whymax, "The contacts server said %d", r.status);
+		snprintf(why, whymax, "The contacts server %s", http_status_words(r.status));
 		return CAL_RES_FAILED;
 	}
 	if (not_whole("the address books", why, whymax)) return CAL_RES_FAILED;
@@ -537,7 +537,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 	g_listing = b;
 	res = propfind(b->href, 1, "<D:resourcetype/><D:getetag/>", etags_end, &r, why, whymax);
 	if (res != CAL_RES_OK) return res;
-	if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", b->name, r.status); return CAL_RES_FAILED; }
+	if (r.status != 207) { snprintf(why, whymax, "Could not read %s - the server %s", b->name, http_status_words(r.status)); return CAL_RES_FAILED; }
 	if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
 	/* cards gone from the server */
 	for (i = 0; i < g_ncard; ) {
@@ -572,7 +572,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 		res = http_request("REPORT", b->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
 			body, n, &r, sink, g_dav, why, whymax);
 		if (res != CAL_RES_OK) return res;
-		if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", b->name, r.status); return CAL_RES_FAILED; }
+		if (r.status != 207) { snprintf(why, whymax, "Could not read %s - the server %s", b->name, http_status_words(r.status)); return CAL_RES_FAILED; }
 		if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
 		*count += g_dav->count;
 		pm_progress("Fetching %s (%d)...", b->name, *count);

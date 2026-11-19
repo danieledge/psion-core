@@ -106,6 +106,19 @@ void http_follow(const char *url, char *out, int max)
 	}
 }
 
+const char *http_status_words(int status)
+{
+	pm_log("http: status %d", status);
+	if (status == 401) return "would not take the user name or password";
+	if (status == 403) return "does not allow it";
+	if (status == 404 || status == 410) return "found nothing at that address";
+	if (status == 405 || status == 501) return "does not offer it at that address";
+	if (status == 429 || status == 503) return "is busy - try again later";
+	if (status >= 500) return "had a problem - try again later";
+	if (status >= 300 && status < 400) return "sent it to another address";
+	return "did not accept the request";
+}
+
 void http_close(void)
 {
 	if (g_conn >= 0 && pmn_conn_id() == g_conn) pmn_close(0);

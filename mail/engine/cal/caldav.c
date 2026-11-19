@@ -398,7 +398,7 @@ static int list_calendars(char *why, int whymax)
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) {
 		if (r.status == 404) { snprintf(why, whymax, "No calendars found at %.60s", g_home); g_home[0] = 0; save_cals(); }
-		else snprintf(why, whymax, "The calendar server said %d", r.status);
+		else snprintf(why, whymax, "The calendar server %s", http_status_words(r.status));
 		return CAL_RES_FAILED;
 	}
 	if (not_whole(g_dav, "the calendars", why, whymax)) return CAL_RES_FAILED;
@@ -607,7 +607,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 	res = http_request("REPORT", c->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
 		body, n, &r, sink, g_dav, why, whymax);
 	if (res != CAL_RES_OK) return res;
-	if (r.status != 207) { snprintf(why, whymax, "Could not read %s (%d)", c->name, r.status); return CAL_RES_FAILED; }
+	if (r.status != 207) { snprintf(why, whymax, "Could not read %s - the server %s", c->name, http_status_words(r.status)); return CAL_RES_FAILED; }
 	if (not_whole(g_dav, c->name, why, whymax)) return CAL_RES_FAILED;
 	pm_log("caldav: %s: %d events", c->name, g_dav->count);
 	if (g_t.series && g_nseries) {
@@ -663,7 +663,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 			body, n, &r, sink, g_dav, why, whymax);
 		g_todo_report = 0;
 		if (res != CAL_RES_OK) return res;
-		if (r.status != 207) { snprintf(why, whymax, "Could not read %s's to-dos (%d)", c->name, r.status); return CAL_RES_FAILED; }
+		if (r.status != 207) { snprintf(why, whymax, "Could not read %s's to-dos - the server %s", c->name, http_status_words(r.status)); return CAL_RES_FAILED; }
 		if (not_whole(g_dav, c->name, why, whymax)) return CAL_RES_FAILED;
 		pm_log("caldav: %s: %d to-dos", c->name, g_dav->count - events);
 	}

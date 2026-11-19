@@ -360,15 +360,23 @@ void CPmCalSync::Failed(TInt aError)
 	case KErrInUse:
 	case KErrLocked: why = _L("The Agenda file is busy"); break;
 	case KErrNoMemory: why = _L("Not enough memory for the calendar"); break;
-	case KErrDiskFull: why = _L("Calendar not synced - no room left on the disk"); break;
-	case KErrNotReady:
-	case KErrDisMounted: why = _L("Calendar not synced - the memory disk is not there"); break;
-	case KErrAccessDenied: why = _L("Calendar not synced - the disk is write-protected"); break;
+	case KErrDiskFull: why = _L("Calendar not synced - the disk is full"); break;
+	case KErrNotReady: why = _L("Calendar not synced - the card is not in"); break;
+	case KErrDisMounted: why = _L("Calendar not synced - the card was taken out"); break;
+	case KErrAccessDenied: why = _L("Calendar not synced - it is read-only or in use"); break;
 	case KErrCorrupt:
 	case KErrEof: why = _L("The Agenda file could not be read"); break;
 	case KErrCancel: why = _L("Calendar sync stopped"); break;
 	case KErrPmCalClock: why = _L("Calendar not synced - set the date first"); break;
-	default: why.Format(_L("Calendar sync failed (%d)"), aError); break;
+	default:
+		{
+		// (the number to the log, never on screen: review R105)
+		why = _L("Calendar not synced - for an unknown reason");
+		TBuf8<48> l;
+		l.Format(_L8("agenda: the pass failed (%d)"), aError);
+		iObserver.CalLog(l);
+		break;
+		}
 		}
 	iObserver.CalSyncDone(aError, why, EFalse);
 	}

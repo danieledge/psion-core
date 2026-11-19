@@ -688,7 +688,22 @@ TInt PmCardSync::Run(RFs& aFs, const TDesC& aDir, TBool aCopyExisting, MPmCalObs
 	else if (err == KErrNotFound)
 		aSummary = _L("Contacts file not found - open Contacts once");
 	else
-		aSummary.Format(_L("Contacts not synced (%d)"), err);
+		{
+		// words, the number to the log (review R105; psierr.h's table)
+		switch (err)
+			{
+		case KErrNoMemory: aSummary = _L("Contacts not synced - not enough memory"); break;
+		case KErrDiskFull: aSummary = _L("Contacts not synced - the disk is full"); break;
+		case KErrNotReady: aSummary = _L("Contacts not synced - the card is not in"); break;
+		case KErrInUse:
+		case KErrLocked: aSummary = _L("Contacts not synced - Contacts is busy"); break;
+		case KErrCorrupt: aSummary = _L("Contacts not synced - the file is damaged"); break;
+		default: aSummary = _L("Contacts not synced - for an unknown reason"); break;
+			}
+		TBuf8<40> l;
+		l.Format(_L8("contacts: the pass failed (%d)"), err);
+		aObserver.CalLog(l);
+		}
 	delete pass;
 	return err;
 	}

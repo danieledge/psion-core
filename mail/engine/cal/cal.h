@@ -159,6 +159,10 @@ int  http_request(const char *method, const char *path, const char *headers,
                   const char *body, int blen, HttpResp *r, HttpSink sink, void *ctx,
                   char *why, int whymax);
 void http_close(void);
+/* an HTTP status the engine cannot use, as words to follow "The calendar
+   server ..." ("is busy - try again later"); the number goes to the log
+   (review R105: no bare numbers on screen) */
+const char *http_status_words(int status);
 /* a URL the server gave (a redirect's Location, a home collection's href):
    its path into out. If it names another host in the domain of the one set
    up (iCloud: caldav.icloud.com hands out p68-caldav.icloud.com), with the
