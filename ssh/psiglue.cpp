@@ -2929,6 +2929,11 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	gModemOnline = 0;
 	gLinkDoubt = 0;
 	gRxPos = gRxLen = 0;
+	// with no link open, the route the chunk names now: a program that runs
+	// all day attaches once, and the route can change between its calls
+	// (as pg_attach called again; review R60)
+	if (gShared && !gCommOpen && !gSsOpen)
+		gNet = gShared->net_mode ? 1 : 0;
 	if (gNet)
 		{
 		if (pg_quit_requested())
@@ -2964,9 +2969,11 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			if ((r == -10 || r == -13) && PsiLinkActive() == 1)
 				// (PPP has the port: the Psion Internet connection was left up -
 				// "Stay connected" - and the route has since become the modem)
-				SetMsg(aResult, aResultMax, "the Psion Internet connection has the serial port - disconnect it first (File > Disconnect)");
+				SetMsg(aResult, aResultMax, "Psion Internet has the serial port - disconnect it first");
 			else if (r == -10 || r == -13)
-				SetMsg(aResult, aResultMax, "the serial port is in use by another program");
+				// (the Psion's own link to a PC - Remote link on the 5mx, Link to desktop
+				// on the netBook, Ctrl+L on the System screen - holds it most often)
+				SetMsg(aResult, aResultMax, "the PC link (Ctrl+L) or a program has the serial port");
 			else
 				SetMsgErr(aResult, aResultMax, "could not set up the serial port", r);   // (pg_link_open's step codes)
 			return -1;
@@ -2999,7 +3006,14 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		if (ModemAnswersAt())
 			Say("  Modem OK\r\n");
 		else
+			{
+			// (review R64) no answer to the second AT either: said now, not
+			// after the dial's 30 s wait for a reply that cannot come
 			Say("  The modem still does not answer AT - is it on, and at this baud rate?\r\n");
+			LinkLog("modem: no answer to AT after +++ ATH - not dialling");
+			SetMsg(aResult, aResultMax, pg_quit_requested() ? "Stopped" : "no answer from the modem - is it on?");
+			return -1;
+			}
 		}
 	// Wi-Fi modems (WiRSa, WiFi232, RetroWiFiModem) can treat 0xFF bytes as
 	// telnet commands, eating or doubling them, which corrupts SSH and TLS.
