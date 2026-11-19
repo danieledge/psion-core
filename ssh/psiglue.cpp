@@ -1893,10 +1893,18 @@ static void SwitchOnCheck()
 	}
 
 // Opens the chunk the app created. Returns 0, or <0 (see pg_init).
+// Called again once attached, it takes up the route the chunk now names
+// (net_mode) if no link is open: a program that runs all day (psisync.exe)
+// attaches once at its start, before it has read the connection settings,
+// and the person can change the route between two of its syncs.
 extern "C" int pg_attach()
 	{
 	if (gShared)
+		{
+		if (!gCommOpen && !gSsOpen)
+			gNet = gShared->net_mode ? 1 : 0;
 		return 0;
+		}
 	if (!gChunk)
 		gChunk = new RChunk;
 	if (!gChunk)
