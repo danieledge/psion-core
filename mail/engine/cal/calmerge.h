@@ -58,4 +58,36 @@ enum
 int cal_merge(const CmFacts *f, int options);
 const char *cal_merge_name(int action);
 
+/* CmFacts.in_window: would the server's answer have the entry, were it
+   still there? The engine asks for events inside the synced dates and, with
+   to-dos on, for every to-do (they have no window). An entry the answer
+   could not have had is only unlinked when it is missing, never deleted. */
+typedef struct
+	{
+	int no_start;            /* gone, or no date to judge it by */
+	int todo;                /* an Agenda to-do */
+	int todos;               /* to-dos are synced (KPmCalOptTodos) */
+	int in_range;            /* its start is inside the synced dates */
+	} CmWhen;
+int cal_in_window(const CmWhen *w);
+
+/* the mass-deletion guard, both ways (KPmCalOptGuard, and contacts): more
+   than 10 of the linked entries, and more than half, would be deleted at
+   once (gone from the server, or from the Psion) - then none are */
+int cal_guard(int linked, int deleting);
+
+/* A sync with the clock reset (the backup cell flat: 1 January 2002) asks
+   for the wrong dates: an empty answer deletes or doubles entries. The
+   clock is taken as wrong if it says a year before the program was built.
+   now: seconds since 1970 (UTC). (Here, not in a .c file: the engines that
+   link no calmerge.c use it too.) */
+#define CAL_BUILD_YEAR ((__DATE__[7] - '0') * 1000 + (__DATE__[8] - '0') * 100 + \
+	(__DATE__[9] - '0') * 10 + (__DATE__[10] - '0'))
+static int cal_clock_ok(long now, int build_year)
+	{
+	long y = build_year - 1;
+	long days = 365L * (build_year - 1970) + (y / 4 - y / 100 + y / 400) - 477;   /* 1 January, from 1970 */
+	return now >= days * 86400L;
+	}
+
 #endif

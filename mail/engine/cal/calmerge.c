@@ -31,6 +31,21 @@ int cal_merge(const CmFacts *f, int options)
 	return CM_SKIP;
 }
 
+int cal_in_window(const CmWhen *w)
+{
+	if (w->no_start) return 1;
+	/* a to-do is in the answer only with to-dos on (all of them); before,
+	   "to-dos on" counted every entry as in the window, so events that had
+	   aged out of it were deleted from the Agenda, one or two a day */
+	if (w->todo) return w->todos;
+	return w->in_range;
+}
+
+int cal_guard(int linked, int deleting)
+{
+	return deleting > 10 && deleting * 2 > linked;
+}
+
 const char *cal_merge_name(int a)
 {
 	static const char *const n[] = { "skip", "unlink", "delete-local", "push-delete", "readd",

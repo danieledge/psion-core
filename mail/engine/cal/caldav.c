@@ -43,6 +43,7 @@
 #include <string.h>
 #include "calport.h"
 #include "cal.h"
+#include "calmerge.h"        /* cal_clock_ok */
 
 #define MAX_CALS 24
 typedef struct
@@ -220,6 +221,7 @@ typedef struct
 	int is_cal, vevent, vtodo, comps, writable;
 	int whole;               /* the multistatus ended: the answer is all there */
 	int truncated;           /* the server cut its own list short (507) */
+	int cut;                 /* an event's calendar data was more than we keep: not all of it read */
 	int got_data;
 	int ndata;
 	/* discovery */
@@ -247,6 +249,13 @@ static void note_whole(Dav *d, const char *name, const char *text)
 
 static int not_whole(Dav *d, const char *what, char *why, int whymax)
 {
+	if (d->cut) {
+		/* (used as whole, a cut series lost its later instances, and their
+		   Agenda entries went as "deleted on the server") */
+		pm_log("caldav: %s: an event too big to read whole", what);
+		snprintf(why, whymax, "An event in %s is too big to read", what);
+		return 1;
+	}
 	if (d->whole && !d->truncated) return 0;
 	pm_log("caldav: %s: the list is not whole (%s)", what, d->truncated ? "507" : "no end");
 	snprintf(why, whymax, "The calendar server's answer was cut short");
@@ -512,7 +521,10 @@ static void report_end(XmlScan *x, const char *name, const char *text, int len, 
 	else if (!strcmp(name, "calendar-data")) {
 		/* keep the data until the response ends: the href and etag may
 		   come after it. The text buffer is ours until the next element. */
-		if (x->over) pm_log("caldav: %s is too big, cut short", d->href);
+		if (x->over || len >= OBJ_MAX - 1) {
+			pm_log("caldav: %s is too big, cut short", d->href);
+			d->cut = 1;
+		}
 		if (len > 0) {
 			memmove(g_obj, text, len < OBJ_MAX - 1 ? len : OBJ_MAX - 1);
 			d->ndata = len < OBJ_MAX - 1 ? len : OBJ_MAX - 1;
@@ -727,6 +739,75 @@ static void mark_fetch(const char *href)
 	}
 }
 
+/* (a change sent again: its reply was lost) does the server's copy already
+   say what the change says? Then the change was made, and is no conflict:
+   called one, "keep both" made a copy of the entry, and every lost reply
+   was another duplicate. Compared as events.txt has them. */
+typedef struct { const char *recurid; const IcsChange *c; int found, same; } SameCtx;
+
+static void plain(char *out, const char *in, int max)
+{
+	int n;
+	pm_copy(out, in, max);
+	for (n = 0; out[n]; n++) if ((unsigned char)out[n] < 32) out[n] = ' ';
+	trim(out);
+}
+
+static int same_text(const char *server, const char *psion)
+{
+	char a[200], b[200];
+	plain(a, server, sizeof(a));
+	plain(b, psion, sizeof(b));
+	return !strcmp(a, b);
+}
+
+static void same_event(const IcsEvent *e, void *ctx)
+{
+	SameCtx *m = (SameCtx *)ctx;
+	const IcsChange *c = m->c;
+	long s = e->start, en = e->end;
+	char a1[16], a2[16], b1[16], b2[16];
+	if (strcmp(e->recurid, m->recurid) || m->found++) return;
+	if (!e->allday && !e->floating) { s = cal_utc_to_local(g_t.zone, s); en = cal_utc_to_local(g_t.zone, en); }
+	if (e->allday && en > s) en -= 86400;
+	cal_fmt_local(s, a1); cal_fmt_local(c->start, a2);
+	cal_fmt_local(en, b1); cal_fmt_local(c->end, b2);
+	if (strcmp(a1, a2) || strcmp(b1, b2) || !e->allday != !c->allday) return;
+	if (c->alarm >= -1 && e->alarm != c->alarm) return;           /* (-2: the alarm left alone) */
+	if (!same_text(e->summary[0] ? e->summary : "(no title)", c->summary)) return;
+	if (!same_text(e->location, c->location)) return;
+	m->same = 1;
+}
+
+static void same_todo(const IcsTodo *t, void *ctx)
+{
+	SameCtx *m = (SameCtx *)ctx;
+	const IcsChange *c = m->c;
+	char a1[16], a2[16];
+	if (m->found++) return;
+	if (t->has_due) {
+		long due = t->due_utc ? cal_utc_to_local(g_t.zone, t->due) : t->due;
+		if (!c->start) return;
+		cal_fmt_local(due, a1); cal_fmt_local(c->start, a2);
+		if (strcmp(a1, a2)) return;
+	} else if (c->start) return;
+	if (!t->done != !c->done || t->priority != c->priority) return;
+	if (!same_text(t->summary[0] ? t->summary : "(no title)", c->summary)) return;
+	m->same = 1;
+}
+
+static int already_there(const char *obj, int len, const char *recurid, const IcsChange *c)
+{
+	SameCtx m;
+	if (c->series) return 0;             /* (a series' rule and dates: not compared) */
+	memset(&m, 0, sizeof(m));
+	m.recurid = recurid;
+	m.c = c;
+	if (c->todo) ics_each_todo(obj, len, same_todo, &m);
+	else ics_each(obj, len, same_event, &m);
+	return m.found == 1 && m.same;
+}
+
 /* one change; returns CAL_RES_OK unless the connection is gone */
 static int push_one(char *line, FILE *res, char *why, int whymax)
 {
@@ -806,8 +887,21 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		if (rc != CAL_RES_OK) return rc;
 		if (r.status == 404) { pushed(res, key, "gone", href); return CAL_RES_OK; }
 		if (r.status != 200 || len >= OBJ_MAX - 1) { pushed(res, key, "failed", href); return CAL_RES_OK; }
-		if (etag[0] && r.etag[0] && strcmp(etag, r.etag)) { pushed(res, key, "conflict", href); return CAL_RES_OK; }
 		g_obj[len] = 0;
+		if (etag[0] && r.etag[0] && strcmp(etag, r.etag)) {
+			if (op[0] == 'M') {
+				read_change(&p, &c);
+				read_repeat(&p, &c);
+				if (already_there(g_obj, len, recurid, &c)) {
+					pm_log("caldav: %s %s: the server has it already (a reply lost?)", href, recurid);
+					pushed(res, key, "ok", href);
+					touch(href);
+					return CAL_RES_OK;
+				}
+			}
+			pushed(res, key, "conflict", href);
+			return CAL_RES_OK;
+		}
 		if (op[0] == 'M') {
 			read_change(&p, &c);
 			read_repeat(&p, &c);
@@ -819,9 +913,25 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 			r.etag[0] ? "If-Match: " : "", r.etag, r.etag[0] ? "\r\n" : "");
 		rc = http_request("PUT", href, hdr, g_obj, len, &r, 0, 0, why, whymax);
 		if (rc != CAL_RES_OK) return rc;
+		pm_log("caldav: %s %s %s -> %d", op, href, recurid, r.status);
+		if (r.status == 412 && op[0] == 'M') {
+			/* the etag moved since the GET: perhaps by this change itself,
+			   its reply lost and the request sent again on a new connection
+			   (http.c): the server's copy says which */
+			len = 0;
+			rc = http_request("GET", href, "", 0, 0, &r, body_to_obj, &len, why, whymax);
+			if (rc != CAL_RES_OK) return rc;
+			if (r.status == 200 && len < OBJ_MAX - 1) {
+				g_obj[len] = 0;
+				if (already_there(g_obj, len, recurid, &c)) {
+					pm_log("caldav: %s %s: the server has it already (a reply lost?)", href, recurid);
+					r.status = 204;
+				} else r.status = 412;
+			} else r.status = r.status == 404 ? 404 : 412;
+			if (r.status == 404) { pushed(res, key, "gone", href); return CAL_RES_OK; }
+		}
 		pushed(res, key, r.status / 100 == 2 ? "ok" : r.status == 412 ? "conflict" : "failed", href);
 		if (r.status / 100 == 2) touch(href);
-		pm_log("caldav: %s %s %s -> %d", op, href, recurid, r.status);
 		return CAL_RES_OK;
 	}
 	return CAL_RES_OK;
@@ -933,6 +1043,13 @@ static int sync_now(int list_only, char *why, int whymax)
 	if (!g_t.user) g_t.user = "";
 	pass = g_t.pass ? g_t.pass : "";
 	if (!g_t.host[0]) { snprintf(why, whymax, "No calendar server set up"); return CAL_RES_FAILED; }
+	/* a clock reset (to 2002: the backup cell flat) would ask for the wrong
+	   dates, and an empty answer deletes or doubles the Agenda's entries */
+	if (!cal_clock_ok(pm_time(), CAL_BUILD_YEAR)) {
+		pm_log("caldav: the clock says %ld, before %d: not synced", pm_time(), CAL_BUILD_YEAR);
+		snprintf(why, whymax, "set the Psion's date first");
+		return CAL_RES_FAILED;
+	}
 	if (!pass[0]) { snprintf(why, whymax, "Password needed for the calendar"); return CAL_RES_NEED_PASS; }
 	snprintf(g_dir, sizeof(g_dir), "%scal%s", calp_dir(), CAL_SEP);
 	pm_mkdir(g_dir);

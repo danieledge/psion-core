@@ -35,6 +35,8 @@ struct TPcMap
 	TUint iFlags;
 	HBufC8* iKey;              // href ("" = new, not yet on the server)
 	TBool iSeen;
+	TBool iGone;               // (MappedL) deleted in Contacts
+	TInt64 iNow;               // (MappedL) its LastModified now
 	};
 
 // ---------------------------------------------------------------- helpers
@@ -133,6 +135,7 @@ public:
 	void RunL(const TDesC& aDir, TBool aCopyExisting);
 	TInt iAdded, iChanged, iRemoved, iSent, iFailed, iKept;
 	TBool iGuarded;
+	TBool iGuardedOut;         // most linked contacts gone from Contacts at once: no deletions sent
 private:
 	void Path(const TDesC& aName, TDes& aPath) const { aPath = iDir; aPath.Append(aName); }
 	void LoadL(TBool aCopyExisting);
@@ -424,24 +427,31 @@ void CPcPass::ReadPushedL()
 
 void CPcPass::MappedL()
 	{
-	// the guard: most linked contacts gone from the server at once -> none deleted
-	TInt linked = 0, missing = 0, i;
+	// the guard, both ways (calmerge.c cal_guard): most linked contacts gone
+	// from the server at once -> none deleted here; most gone from Contacts
+	// (the file replaced or emptied apart from the links) -> no deletions
+	// sent, the links kept
+	TInt linked = 0, missing = 0, gone = 0, i;
 	for (i = 0; i < iMap->Count(); i++)
 		{
-		const TPcMap& m = (*iMap)[i];
+		TPcMap& m = (*iMap)[i];
+		m.iGone = EFalse;
+		m.iNow = m.iId != KNullContactId ? Modified(m.iId, m.iGone) : TInt64(0);
 		if (m.iFlags & (KFlagPending | KFlagDeleting)) continue;
 		linked++;
 		if (FindIndex(*m.iKey) < 0) missing++;
+		if (m.iGone && FindIndex(*m.iKey) >= 0) gone++;
 		}
-	iGuarded = missing > 10 && missing * 2 > linked;
+	iGuarded = cal_guard(linked, missing);
+	iGuardedOut = cal_guard(linked, gone);
 	for (i = 0; i < iMap->Count(); )
 		{
 		TPcMap& m = (*iMap)[i];
 		if (m.iFlags & KFlagPending) { i++; continue; }
 		TInt ix = FindIndex(*m.iKey);
 		if (ix >= 0) m.iSeen = ETrue;
-		TBool gone = EFalse;
-		TInt64 changed = Modified(m.iId, gone);
+		TBool gone = m.iGone;
+		TInt64 changed = m.iNow;
 		CmFacts f;
 		Mem::FillZ(&f, sizeof(f));
 		f.flags = m.iFlags;
@@ -465,6 +475,8 @@ void CPcPass::MappedL()
 			}
 		TInt action = cal_merge(&f, CM_OPT_KEEPBOTH);
 		if (action == CM_DELETE_LOCAL && iGuarded)
+			action = CM_SKIP;
+		if (action == CM_PUSH_DELETE && iGuardedOut)
 			action = CM_SKIP;
 		if (f.on_server && f.readable && !f.gone && f.no_baseline && !(m.iFlags & KFlagForce))
 			m.iHash = hash;
@@ -668,6 +680,8 @@ TInt PmCardSync::Run(RFs& aFs, const TDesC& aDir, TBool aCopyExisting, MPmCalObs
 			sum.AppendFormat(_L("; %d changed on both: the Psion's kept"), pass->iKept);
 		if (pass->iGuarded)
 			sum.Append(_L("; many gone from the server - none removed"));
+		if (pass->iGuardedOut)
+			sum.Append(_L("; many gone from Contacts - none deleted on the server"));
 		aSummary.Copy(sum.Left(Min(sum.Length(), aSummary.MaxLength())));
 		aPushed = pass->iSent > 0;
 		}

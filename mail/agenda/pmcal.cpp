@@ -40,6 +40,8 @@ const TUint KMapDeleting = 2;      // deleted on the Psion, deletion sent
 const TUint KMapForce = 4;         // the server refused a change: put its version back
 const TUint KMapSeries = 8;        // (KPmCalOptRepeats) a repeating Agenda entry, the whole of an event
                                    // on the server: key "href|*", hash of its etag
+const TUint KMapHeld = 0x100;      // (this pass only, never saved) a deletion to send, held: see HeldDeletesL
+const TInt KCheckpoint = 20;       // Agenda entries made between saves of the links
 
 const TInt KStep = 6;              // entries per step
 
@@ -310,7 +312,8 @@ void CPmCalSync::StartL(const TDesC& aStoreDir, const TPmCalSettings& aSettings)
 	iDir.Append(_L("cal\\"));
 	iAdded = iChangedN = iRemoved = iSent = iFailed = iKept = 0;
 	iPushSeries = EFalse;
-	iGuarded = EFalse;
+	iGuarded = iGuardedOut = EFalse;
+	iLinked = iHeld = iUnsaved = 0;
 	iPushedRead = EFalse;
 	iPhase = EOpen;
 	iPos = 0;
@@ -364,6 +367,7 @@ void CPmCalSync::Failed(TInt aError)
 	case KErrCorrupt:
 	case KErrEof: why = _L("The Agenda file could not be read"); break;
 	case KErrCancel: why = _L("Calendar sync stopped"); break;
+	case KErrPmCalClock: why = _L("Calendar not synced - set the date first"); break;
 	default: why.Format(_L("Calendar sync failed (%d)"), aError); break;
 		}
 	iObserver.CalSyncDone(aError, why, EFalse);
@@ -394,11 +398,13 @@ void CPmCalSync::StepL()
 		more = ETrue;
 		break;
 	case EMapped:
-		if (!MappedStepL()) { iPhase = ENew; iPos = 0; }
+		if (!MappedStepL()) { HeldDeletesL(); iPhase = ENew; iPos = 0; }
+		if (iUnsaved >= KCheckpoint) CheckpointL();
 		more = ETrue;
 		break;
 	case ENew:
 		if (!NewStepL()) { iPhase = ELocal; iPos = 0; }
+		if (iUnsaved >= KCheckpoint) CheckpointL();
 		more = ETrue;
 		break;
 	case ELocal:
@@ -660,7 +666,7 @@ void CPmCalSync::SaveMapL()
 		line.Append('\t');
 		line.AppendNumFixedWidth((TUint)m.iHash, EHex, 8);
 		line.Append('\t');
-		line.AppendNum((TInt)m.iFlags);
+		line.AppendNum((TInt)(m.iFlags & ~KMapHeld));
 		line.Append('\t');
 		line.Append(Clip(*m.iKey, line.MaxLength() - line.Length() - 1));
 		line.Append('\n');
@@ -855,6 +861,16 @@ TBool CPmCalSync::Writable(const TDesC8& aLine) const
 
 void CPmCalSync::OpenL()
 	{
+	// a clock reset to 2002 (the backup cell flat) puts the window years
+	// away: the server's events would all look gone, the Psion's all new
+	{
+	TTime now;
+	now.UniversalTime();
+	TTimeIntervalSeconds secs;
+	if (now.SecondsFrom(TTime(TDateTime(1970, EJanuary, 0, 0, 0, 0, 0)), secs) != KErrNone ||
+		!cal_clock_ok(secs.Int(), CAL_BUILD_YEAR))
+		User::Leave(KErrPmCalClock);
+	}
 	User::LeaveIfError(iFs.Connect());
 	iFsOpen = ETrue;
 	TEntry entry;
@@ -1513,8 +1529,10 @@ TBool CPmCalSync::MappedStepL()
 		CAgnEntry* e = FetchL(m.iAuid);
 		TBool gone = e == NULL;
 		TTime start = Time::NullTTime();
+		TBool todo = EFalse;
 		if (e)
 			{
+			todo = e->Type() == CAgnEntry::ETodo;
 			start = e->Type() == CAgnEntry::EAppt ? e->CastToAppt()->StartDateTime() : e->InstanceStartDate();
 			delete e;
 			e = NULL;
@@ -1532,8 +1550,16 @@ TBool CPmCalSync::MappedStepL()
 		else
 			f.local_changed = !gone && changed != m.iChanged;
 		f.on_server = ev >= 0;
-		f.in_window = start == Time::NullTTime() || (start >= iWinStart && start < iWinEnd) ||
-			(iSettings.iSpare[0] & KPmCalOptTodos);       // (to-dos: no window; an event's start is in it anyway)
+		// (calmerge.c cal_in_window: to-dos have no window, but only to-dos;
+		// "to-dos on" once let every entry be in it, and past events were
+		// deleted as they aged out)
+		CmWhen when;
+		Mem::FillZ(&when, sizeof(when));
+		when.no_start = start == Time::NullTTime();
+		when.todo = todo;
+		when.todos = (iSettings.iSpare[0] & KPmCalOptTodos) != 0;
+		when.in_range = start >= iWinStart && start < iWinEnd;
+		f.in_window = cal_in_window(&when);
 		const TDesC8* line = NULL;
 		TUint32 hash = 0;
 		if (ev >= 0)
@@ -1562,6 +1588,7 @@ TBool CPmCalSync::MappedStepL()
 			TUint32 na = AddSeriesL(*(*iEvents)[sline].iLine);
 			if (na)
 				{
+				iUnsaved++;
 				m.iAuid = na;
 				m.iChanged = Changed(na);
 				m.iHash = Fnv(Field(*(*iEvents)[sline].iLine, 2));
@@ -1602,6 +1629,14 @@ TBool CPmCalSync::MappedStepL()
 			RemoveMap(iPos);
 			continue;
 		case CM_PUSH_DELETE:
+			if (iSettings.iSpare[0] & KPmCalOptGuard)
+				{
+				// (KPmCalOptGuard) sent once every linked entry has been
+				// seen, unless most of them are gone: HeldDeletesL
+				m.iFlags |= KMapHeld;
+				iHeld++;
+				break;
+				}
 			iPushSeries = series;
 			PushEntryL('D', m.iAuid, NULL, *line);
 			iPushSeries = EFalse;
@@ -1613,12 +1648,16 @@ TBool CPmCalSync::MappedStepL()
 			m.iHash = hash;
 			m.iFlags = 0;
 			iAdded++;
+			iUnsaved++;
 			break;
 		case CM_KEEP_BOTH:
 			// the Psion's version first, as an entry of its own: it is new
 			// to the server, so the next pass sends it
 			if (CopyEntryL(m.iAuid))
+				{
 				iKept++;
+				iUnsaved++;
+				}
 			// then as CM_UPDATE_LOCAL
 		case CM_UPDATE_LOCAL:
 			m.iAuid = UpdateFromEventL(m.iAuid, *line);
@@ -1657,6 +1696,7 @@ TBool CPmCalSync::MappedStepL()
 void CPmCalSync::GuardCheck()
 	{
 	iGuarded = EFalse;
+	iLinked = 0;
 	if (!(iSettings.iSpare[0] & KPmCalOptGuard))
 		return;
 	TInt linked = 0, missing = 0;
@@ -1669,7 +1709,62 @@ void CPmCalSync::GuardCheck()
 		if ((m.iFlags & KMapSeries) ? FindSeries(*m.iKey, -1) < 0 : FindEvent(*m.iKey) < 0)
 			missing++;
 		}
-	iGuarded = missing > 10 && missing * 2 > linked;
+	iLinked = linked;
+	iGuarded = cal_guard(linked, missing);
+	}
+
+// (KPmCalOptGuard) the other way: an Agenda file replaced or emptied apart
+// from the links (restored, copied over, a new one under the same name)
+// has every linked entry "deleted by the user", and every one would be
+// deleted on the server. The deletions the pass found are sent only if
+// they are not most of the linked entries; else none are, the links stay,
+// and the summary says so. (Restoring the entries, or deleting them on the
+// server, clears it.)
+void CPmCalSync::HeldDeletesL()
+	{
+	if (!iHeld)
+		return;
+	iGuardedOut = cal_guard(iLinked, iHeld);
+	for (TInt i = 0; i < iMap->Count(); i++)
+		{
+		TPmCalMap& m = (*iMap)[i];
+		if (!(m.iFlags & KMapHeld))
+			continue;
+		m.iFlags &= ~KMapHeld;
+		if (iGuardedOut)
+			continue;
+		TBool series = (m.iFlags & KMapSeries) != 0;
+		TInt ev = series ? FindSeries(*m.iKey, -1) : FindEvent(*m.iKey);
+		if (ev < 0)
+			continue;
+		iPushSeries = series;
+		PushEntryL('D', m.iAuid, NULL, *(*iEvents)[ev].iLine);
+		iPushSeries = EFalse;
+		m.iFlags = KMapDeleting | (series ? KMapSeries : 0);
+		}
+	TBuf8<80> l;
+	l.Format(_L8("agenda: %d deleted here, %d linked: "), iHeld, iLinked);
+	l.Append(iGuardedOut ? _L8("none sent (most of them)") : _L8("sent"));
+	iObserver.CalLog(l);
+	iHeld = 0;
+	}
+
+// the links and the changes to send saved part-way through a pass, as
+// Failed does: a pass cut short (the Psion reset, the batteries out) made
+// again, at the next, every entry it had added - the links were saved only
+// at the end
+void CPmCalSync::CheckpointL()
+	{
+	SaveMapL();
+	SavePushL();
+	if (iPushedRead)
+		{
+		TFileName path;
+		Path(KPushedFile, path);
+		iFs.Delete(path);
+		iPushedRead = EFalse;
+		}
+	iUnsaved = 0;
 	}
 
 // a copy of an Agenda entry, as a new entry (not linked): returns its UID
@@ -1734,6 +1829,7 @@ TBool CPmCalSync::NewStepL()
 		TUint32 auid = AddFromEventL(*ev.iLine);
 		ev.iMapped = AddMapL(auid, key, ev.iHash, 0);
 		iAdded++;
+		iUnsaved++;
 		n++;
 		}
 	return iPos < iEvents->Count();
@@ -1930,6 +2026,8 @@ void CPmCalSync::FinishL()
 		msg.AppendFormat(_L("; %d changed on both: the Psion's kept as a copy"), iKept);
 	if (iGuarded)
 		msg.Append(_L("; many events gone from the server - none removed from the Agenda"));
+	if (iGuardedOut)
+		msg.Append(_L("; many entries gone from the Agenda - none deleted on the server"));
 	Close();
 	Reset();
 	iPhase = EIdle;

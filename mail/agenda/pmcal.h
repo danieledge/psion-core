@@ -57,6 +57,10 @@ const TInt KPmCalOptStamp = 8;
 const TInt KPmCalOptSeriesIn = 64;  // the server's series the Agenda can repeat (events.txt's S lines) as one repeating entry
 const TInt KPmCalOptTodos = 32;     // to-dos both ways (events.txt's T lines <-> Agenda to-do lists named after the calendars)      // an entry's change told by a hash of what it shows, not the Agenda's minute-long date
 
+// CalSyncDone's aError when the Psion's clock says a year before the
+// program was built (calmerge.h cal_clock_ok): nothing was done
+const TInt KErrPmCalClock = -7801;
+
 class MPmCalObserver
 	{
 public:
@@ -116,6 +120,8 @@ private:
 	void ReadPushedL();
 	TBool MappedStepL();
 	void GuardCheck();
+	void HeldDeletesL();
+	void CheckpointL();
 	TUint32 CopyEntryL(TUint32 aAuid);
 	TUint32 AddSeriesL(const TDesC8& aLine);
 	TInt SeriesLine(const TDesC8& aHref) const;
@@ -184,6 +190,10 @@ private:
 	TInt iAdded, iChangedN, iRemoved, iSent, iFailed;
 	TInt iKept;                // both changed: the Psion's kept as a new entry
 	TBool iGuarded;            // deletions held back (KPmCalOptGuard)
+	TBool iGuardedOut;         // ... and deletions not sent: most linked entries gone from the Agenda at once
+	TInt iLinked;              // linked entries as the pass began (GuardCheck)
+	TInt iHeld;                // deletions to send, held until the linked entries have all been seen
+	TInt iUnsaved;             // Agenda entries made since the links were last saved
 	TBool iPushSeries;         // PushEntryL: the whole of a series (no recurid)
 	};
 
