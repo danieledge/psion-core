@@ -14,12 +14,13 @@
 // The copy is written only when it differs from what is there (the card is
 // written rarely), through <file>~ and RFs::Replace (never a short file); a
 // folder made new on the card is made after a file of zeros, so that a
-// computer's disk check reads it right (Coda's psimkdir.h, review R5).
+// computer's disk check reads it right (psizero.h; Coda's review R5).
 // Nothing here leaves; no writable static data (ER5).
 #ifndef __PSIKEEP_H
 #define __PSIKEEP_H
 #include <e32std.h>
 #include <f32file.h>
+#include "psizero.h"
 
 _LIT(KPsiKeptRoot, "D:\\System\\Data\\Kept\\");
 const TInt KPsiKeepMax = 64 * 1024;          // a settings file bigger is not kept
@@ -77,41 +78,11 @@ static HBufC8* PsiKeepRead(RFs& aFs, const TDesC& aPath)
 	return b;
 	}
 
-// the folders of aPath (a file's) made, those on the card after a file of
-// zeros in their parent (EPOC leaves a new folder's cluster as it was)
+// the folders of aPath (a file's) made: on the card after zeros where
+// they go (psizero.h); folders there already cost nothing
 static void PsiKeepMkDirs(RFs& aFs, const TDesC& aPath)
 	{
-	TChar drive(aPath.Length() ? aPath[0] : 'C');
-	drive.UpperCase();
-	for (TInt i = 3; i < aPath.Length(); i++)
-		{
-		if (aPath[i] != '\\')
-			continue;
-		TEntry e;
-		if (aFs.Entry(aPath.Left(i), e) == KErrNone)
-			continue;
-		if (drive != 'C')
-			{
-			TInt p = i - 1;
-			while (p > 2 && aPath[p] != '\\')
-				p--;
-			TFileName tmp(aPath.Left(p + 1));
-			tmp.Append(_L("~PsiZero.tmp"));
-			RFile z;
-			if (z.Replace(aFs, tmp, EFileWrite) == KErrNone)
-				{
-				TBuf8<512> zeros;
-				zeros.FillZ(512);
-				TInt err = KErrNone;
-				for (TInt n = 0; n < 32 * 1024 && err == KErrNone; n += 512)
-					err = z.Write(zeros);
-				z.Flush();
-				z.Close();
-				aFs.Delete(tmp);
-				}
-			}
-		aFs.MkDir(aPath.Left(i + 1));
-		}
+	PsiMkDirsClean(aFs, aPath);
 	}
 
 // aData written whole as aPath: <aPath>~ first, then in its place
