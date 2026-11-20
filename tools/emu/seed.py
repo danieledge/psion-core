@@ -1,6 +1,7 @@
 # core/tools/emu/seed.py on|off - adds or removes PsiMail's TESTSEED block (an
 # offline Example account, mail copied from the card's SEED folders). Emulator
-# only: it must never be committed (grep TESTSEED app/psimail.cpp). Run from
+# only: it must never be committed (grep TESTSEED app/psimail.cpp; the block
+# leaves CODA-TEST-SEED in the built program, which the release guard finds). Run from
 # the psimail checkout, which has core as its core/ submodule (or set
 # PSION_APP to it).
 import sys
@@ -26,6 +27,11 @@ SEED='''	// TESTSEED (emulator only - remove before release)
 	fm->Copy(_L("D:\\\\SEED\\\\*.*"), _L("C:\\\\PsiMail\\\\A0\\\\F4A1E411B\\\\"));
 	fm->Copy(_L("D:\\\\SEEDA0\\\\*.*"), _L("C:\\\\PsiMail\\\\A0\\\\"));
 	delete fm;
+	}
+	{
+	RFile mark;                              // CODA-TEST-SEED: what a release's guard finds in a seeded build
+	if (mark.Replace(iCoeEnv->FsSession(), _L("C:\\\\System\\\\Temp\\\\CODA-TEST-SEED"), EFileWrite) == KErrNone)
+		mark.Close();
 	}
 	// /TESTSEED
 '''
