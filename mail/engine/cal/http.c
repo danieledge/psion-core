@@ -59,16 +59,44 @@ void http_target(const char *host, int port, int tls, const char *user, const ch
 	memset(raw, 0, sizeof(raw));
 }
 
-/* is host the one set up, or in its domain? ("caldav.icloud.com": any
-   *.icloud.com; a name without a dot, or an address, only itself) */
+/* (review CR-19) a domain someone can register: two labels or more, and
+   three where the last two are a country's second level for everyone
+   (co.uk, com.au, co.jp...: anyone may have a name under them) */
+static int registrable(const char *d)
+{
+	static const char *const k_second[] = {
+		"co", "com", "net", "org", "ac", "gov", "edu", "ne", "or", "go", "gob", "gv",
+		"mil", "nic", "ltd", "plc", "sch", "nhs", "me", "nom", "info", "biz", "web", 0 };
+	const char *last = strrchr(d, '.'), *p;
+	int labels = 1, i, n;
+	for (p = d; *p; p++) if (*p == '.') labels++;
+	if (!last || labels < 2 || d[0] == '.' || !last[1]) return 0;
+	if (labels >= 3 || strlen(last + 1) != 2) return 1;
+	/* two labels, a country's: "co.uk" is not one, "example.uk" is */
+	n = (int)(last - d);
+	for (i = 0; k_second[i]; i++)
+		if ((int)strlen(k_second[i]) == n && !pm_strncasecmp(d, k_second[i], n)) return 0;
+	return 1;
+}
+
+/* host ends ".dom" (and is longer)? */
+static int under(const char *host, const char *dom)
+{
+	int hl = (int)strlen(host), dl = (int)strlen(dom);
+	return dl > 0 && hl > dl + 1 && host[hl - dl - 1] == '.' && !pm_strncasecmp(host + hl - dl, dom, dl);
+}
+
+/* is host the one set up, a name under it, or in its domain?
+   ("caldav.icloud.com": any *.icloud.com; "example.co.uk": only names under
+   it, never another *.co.uk; a name without a dot, or an address, only
+   itself) */
 static int same_domain(const char *host)
 {
 	const char *dom = strchr(g_base, '.');
-	int hl = (int)strlen(host), dl;
-	if (!pm_strncasecmp(host, g_base, 80) && hl == (int)strlen(g_base)) return 1;
-	if (!dom || !strchr(dom + 1, '.') || strspn(g_base, "0123456789.") == strlen(g_base)) return 0;
-	dl = (int)strlen(dom);                   /* ".icloud.com" */
-	return hl > dl && !pm_strncasecmp(host + hl - dl, dom, dl);
+	if (!pm_strncasecmp(host, g_base, 80) && strlen(host) == strlen(g_base)) return 1;
+	if (!dom || strspn(g_base, "0123456789.") == strlen(g_base)) return 0;
+	if (under(host, g_base)) return 1;      /* (dav.example.co.uk for example.co.uk) */
+	return registrable(dom + 1) && under(host, dom + 1);
 }
 
 void http_follow(const char *url, char *out, int max)

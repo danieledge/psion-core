@@ -192,6 +192,7 @@ typedef struct {
 static int g_cipher = 0x1303;
 
 static tls_dir g_rd, g_wr;               /* read (server) / write (client) keys */
+static unsigned char g_s_ap[32], g_c_ap[32];   /* their traffic secrets: a KeyUpdate makes the next */
 static int g_encrypted;
 static const char *g_err;
 
@@ -533,6 +534,8 @@ void tls_close(void)
 {
 	memset(&g_rd, 0, sizeof(g_rd));
 	memset(&g_wr, 0, sizeof(g_wr));
+	memset(g_s_ap, 0, sizeof(g_s_ap));
+	memset(g_c_ap, 0, sizeof(g_c_ap));
 	if (g_w) { psi_work_free(g_w); g_w = 0; }   /* (wiped as it goes) */
 	g_encrypted = 0;
 	g_app_pos = g_app_len = 0;
@@ -851,6 +854,8 @@ int tls_connect(const char *host, char *why, int whymax)
 	}
 	set_keys(&g_rd, s_ap);
 	set_keys(&g_wr, c_ap);
+	memcpy(g_s_ap, s_ap, 32);
+	memcpy(g_c_ap, c_ap, 32);
 #ifdef TLS_RESUME
 	/* resumption_master_secret: transcript up to the client Finished */
 	sha256_process(&transcript, msg, 36);
@@ -870,7 +875,7 @@ fail:
 	tls_close();                         /* no keys left from a handshake that failed */
 done:
 	/* every secret of the handshake goes, whichever way it ended: only the
-	   traffic keys in g_rd/g_wr remain, until tls_close */
+	   traffic keys in g_rd/g_wr (and their secrets) remain, until tls_close */
 	memset(priv, 0, sizeof(priv));
 	memset(shared, 0, sizeof(shared));
 	memset(secret, 0, sizeof(secret));
@@ -954,6 +959,43 @@ static void take_tickets(const unsigned char *m, int len)
 }
 #endif
 
+/* (review CR-26) the handshake messages that come after the handshake:
+   NewSessionTicket (TLS_RESUME) and KeyUpdate (RFC 8446 4.6.3: the server's
+   records from the next on are under its next key; when it asks, ours too,
+   after our own KeyUpdate, sent under the old one). 0 ok, -1 to end */
+static int post_handshake(const unsigned char *m, int len)
+{
+	while (len >= 4) {
+		int mt = m[0], ml = (m[1] << 16) | (m[2] << 8) | m[3];
+		if (ml > len - 4) {
+			if (mt == 24) { g_err = "bad KeyUpdate"; return -1; }
+			return 0;                          /* split over records: not kept */
+		}
+		if (mt == 24) {
+			unsigned char next[32];
+			/* (the last message of its record: none may span a key change) */
+			if (ml != 1 || m[4] > 1 || len != 5) { g_err = "bad KeyUpdate"; return -1; }
+			hkdf_label(g_s_ap, "traffic upd", NULL, 0, next, 32);
+			memcpy(g_s_ap, next, 32);
+			set_keys(&g_rd, g_s_ap);
+			if (m[4] == 1) {                       /* update_requested */
+				static const unsigned char ku[5] = { 24, 0, 0, 1, 0 };   /* update_not_requested */
+				if (write_record(22, ku, 5) != 0) { memset(next, 0, 32); g_err = "could not send"; return -1; }
+				hkdf_label(g_c_ap, "traffic upd", NULL, 0, next, 32);
+				memcpy(g_c_ap, next, 32);
+				set_keys(&g_wr, g_c_ap);
+			}
+			memset(next, 0, 32);
+			return 0;
+		}
+#ifdef TLS_RESUME
+		if (mt == 4) take_tickets(m, 4 + ml);
+#endif
+		m += 4 + ml; len -= 4 + ml;
+	}
+	return 0;
+}
+
 /* Returns bytes read (>0), 0 when the server has closed, -1 on timeout or
    error, -2 if cancelled. */
 int tls_read(void *buf, int max, int timeout_ms)
@@ -979,10 +1021,11 @@ int tls_read(void *buf, int max, int timeout_ms)
 			g_end = len >= 2 && g_rec[1] == 0 ? 2 : 0;   /* (description 0: close_notify) */
 			return 0;
 		}
-#ifdef TLS_RESUME
-		else if (type == 22) take_tickets(g_rec, len);
-#endif
-		/* other type 22 after the handshake (KeyUpdate...) - ignored */
+		else if (type == 22 && post_handshake(g_rec, len) != 0) {
+			g_closed = 1;
+			g_end = 0;
+			return -1;
+		}
 	}
 	{
 		int k = g_app_len - g_app_pos;

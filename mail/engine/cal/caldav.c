@@ -939,7 +939,8 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 
 static int push_changes(int *n, char *why, int whymax)
 {
-	char path[200], rpath[200], line[1400];   /* (a series' rule and dates: PsiSync) */
+	static char line[2400];      /* (a series' rule and dates, up to CAL_EXDATES: PsiSync) */
+	char path[200], rpath[200];
 	FILE *f, *res;
 	int rc = CAL_RES_OK, total = 0, done = 0;
 	*n = 0;
@@ -990,7 +991,8 @@ static int push_changes(int *n, char *why, int whymax)
    events.txt; returns 0 if it can't be used (a new day, another zone) */
 static int keep_old(FILE *out, const char *first_day)
 {
-	char path[200], line[2000], head[60];
+	static char line[3000];      /* (a series' line: its dates taken out, up to CAL_EXDATES) */
+	char path[200], head[60];
 	FILE *f;
 	int zone = g_t.zone;
 	path_of("events.txt", path, sizeof(path));

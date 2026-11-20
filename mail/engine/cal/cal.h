@@ -54,6 +54,10 @@ void xs_feed(XmlScan *x, const char *in, int n);
 const char *xs_parent(XmlScan *x, int up);
 
 /* ---- iCalendar (ics.c) */
+/* (review CR-25) a series' dates taken out, "20261201,20261208": room for 100
+   (9 bytes each). pmcal.cpp's KPmExDates is the same; a series with more is
+   not sent as a series (its rule and dates on the server are left alone) */
+#define CAL_EXDATES 900
 typedef struct
 	{
 	char uid[120];
@@ -71,7 +75,7 @@ typedef struct
 	char organizer[120];     /* "Name <email>" (cp1252) */
 	char attendees[400];     /* "Name <email> S;..." S: A accepted, D declined, T tentative, N needs action */
 	char rrule[160];         /* (a master) its RRULE's value */
-	char exdates[240];       /* ... its EXDATEs as dates, "20261201,20261208" (UTC ones: the date in UTC) */
+	char exdates[CAL_EXDATES];   /* ... its EXDATEs as dates, "20261201,20261208" (UTC ones: the date in UTC) */
 	} IcsEvent;
 /* a PARTSTAT as A, D, T or N (0 if none) */
 char ics_partstat_letter(const char *partstat);
@@ -97,7 +101,7 @@ typedef struct
 	   server's RRULE, RDATE and EXDATE. series 0: leave them as they are */
 	int series;
 	char rrule[120];         /* "FREQ=WEEKLY;BYDAY=MO,TH" (cal_rrule) */
-	char exdates[240];       /* the instances taken out: local dates "20261201,20261208" */
+	char exdates[CAL_EXDATES];   /* the instances taken out: local dates "20261201,20261208" */
 	/* (PsiSync) a to-do (VTODO): start = its due date (local, 0 none) */
 	int todo;
 	int done;                /* crossed out: COMPLETED */

@@ -130,6 +130,10 @@ static void AppendClean(TDes8& aOut, const TDesC8& aText)
 		}
 	}
 
+// a series' dates taken out, "20261201,20261208": 100 of them, as the
+// engine takes (cal.h CAL_EXDATES)
+const TInt KPmExDates = 900;
+
 // (KPmCalOptRepeats) an Agenda entry's repeat as an RRULE and the dates
 // taken out of it ("20261201,20261208"); EFalse if it can't be said as one
 static TBool RepeatOf(CAgnEntry* aEntry, TBool aAllDay, TInt aZone, TDes8& aRule, TDes8& aExDates)
@@ -208,7 +212,12 @@ static TBool RepeatOf(CAgnEntry* aEntry, TBool aAllDay, TInt aZone, TDes8& aRule
 	aRule.Copy(TPtrC8((const TUint8*)rule));
 	aExDates.Zero();
 	const CAgnExceptionList* ex = r->Exceptions();
-	for (i = 0; ex && i < ex->Count() && aExDates.Length() + 9 < aExDates.MaxLength(); i++)
+	// (review CR-25) all of them or the series is not sent as one: a list
+	// cut short would bring the rest back on the server. Then its rule and
+	// dates there are left as they are (a change: the rest of it is sent)
+	if (ex && ex->Count() * 9 > aExDates.MaxLength())
+		return EFalse;
+	for (i = 0; ex && i < ex->Count() && aExDates.Length() + 9 <= aExDates.MaxLength(); i++)
 		{
 		TDateTime d = AgnDateTime::AgnDateToTTime((*ex)[i].Date()).DateTime();
 		if (aExDates.Length()) aExDates.Append(',');
@@ -975,7 +984,7 @@ TInt64 CPmCalSync::Changed(TUint32 aAuid)
 // the entry's details as a push.txt line
 void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const TDesC8& aEventLine)
 	{
-	HBufC8* buf = HBufC8::NewLC(1300);
+	HBufC8* buf = HBufC8::NewLC(1300 + KPmExDates);     // (a series' dates taken out: KPmExDates)
 	TPtr8 line = buf->Des();
 	line.Append(aOp);
 	line.Append(_L8("\ta"));
@@ -1084,7 +1093,8 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 			}
 		// (KPmCalOptRepeats) a repeating entry: its rule and the dates out of it
 		TBuf8<120> rule;
-		TBuf8<240> ex;
+		HBufC8* exb = HBufC8::NewLC(KPmExDates);
+		TPtr8 ex = exb->Des();
 		if ((iSettings.iSpare[0] & KPmCalOptRepeats) && RepeatOf(aEntry, allday, iSettings.iCal.zone, rule, ex))
 			{
 			line.Append(_L8("\tR\t"));
@@ -1092,6 +1102,7 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 			line.Append('\t');
 			line.Append(ex);
 			}
+		CleanupStack::PopAndDestroy();   // exb
 		}
 	PushL(line);
 	CleanupStack::PopAndDestroy();       // buf
@@ -1912,7 +1923,8 @@ TBool CPmCalSync::LocalStepL()
 			(e->RptDef()->RepeatForever() || e->RptDef()->EndDate() >= iWinStart))
 			{
 			TBuf8<120> rule;
-			TBuf8<240> ex;
+			HBufC8* exb = HBufC8::NewLC(KPmExDates);
+			TPtr8 ex = exb->Des();
 			TBool allday = e->Type() != CAgnEntry::EAppt;
 			if ((e->Type() == CAgnEntry::EAppt || e->Type() == CAgnEntry::EEvent) &&
 				RepeatOf(e, allday, iSettings.iCal.zone, rule, ex))
@@ -1920,6 +1932,7 @@ TBool CPmCalSync::LocalStepL()
 				PushEntryL('N', auid, e, KNullDesC8);
 				AddMapL(auid, KNullDesC8, 0, KMapPending | KMapSeries);
 				}
+			CleanupStack::PopAndDestroy();   // exb
 			}
 		CleanupStack::PopAndDestroy();
 		}

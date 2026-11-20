@@ -215,7 +215,7 @@ int ics_each(const char *text, int len, void (*fn)(const IcsEvent *e, void *ctx)
 			const char *q = v;
 			while (*q) {
 				int n = (int)strlen(e.exdates), k;
-				if (n + 10 >= (int)sizeof(e.exdates)) break;
+				if (n + 10 > (int)sizeof(e.exdates)) break;      /* (a comma, eight digits, the end) */
 				if (n) e.exdates[n++] = ',';
 				for (k = 0; k < 8 && q[k] >= '0' && q[k] <= '9'; k++) e.exdates[n + k] = q[k];
 				e.exdates[n + k] = 0;

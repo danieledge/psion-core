@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include "includes.h"
 #include "calport.h"   /* core/mail/engine/cal: calp_dir, pm_progress, st_pin_check ... */
+#include "calmerge.h"  /* cal_clock_ok, CAL_BUILD_YEAR */
 #include "roots.h"
 #include "ecverify.h"
 
@@ -463,12 +464,14 @@ static void remember(const Cert *c)
 	if ((f = fopen(path, g_nknown == 1 ? "w" : "a")) != 0) { fprintf(f, "%s\n", hex); fclose(f); }
 }
 
-/* a certificate's own dates, if the Psion's clock looks set (after 2024);
-   0 ok, else the reason */
+/* a certificate's own dates; 0 ok, else the reason. (review CR-20) With the
+   clock reset (before the year the program was built, the test the calendar
+   sync makes: calmerge.h) the dates cannot be checked, and no chain is
+   trusted until the date is set: chain_ok says so. A pinned key (pins.txt)
+   still is, as it never depended on the dates */
 static const char *dates_bad(const Cert *c, long now)
 {
 	if (c->not_after < 0 || c->not_before < 0) return "its certificate's dates could not be read";
-	if (now <= 1704067200L) return 0;
 	if (c->not_after && now > c->not_after) return "its certificate has expired (is the Psion's clock right?)";
 	if (c->not_before && now + 86400L < c->not_before) return "its certificate is not valid yet (is the Psion's clock right?)";
 	return 0;
@@ -481,6 +484,10 @@ static int chain_ok(long now)
 {
 	int cur = 0, depth, i, j;
 	int path[MAX_CERTS], np = 0;
+	if (!cal_clock_ok(now, CAL_BUILD_YEAR)) {
+		pm_copy(g_problem, "the Psion's clock is not set - set the date first", sizeof(g_problem));
+		return 0;
+	}
 	for (depth = 0; depth < MAX_CERTS; depth++) {
 		Cert *c = &g_cert[cur];
 		const char *bad;
