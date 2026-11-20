@@ -292,8 +292,24 @@ static int not_whole(const char *what, char *why, int whymax)
 {
 	if (g_dav->whole && !g_dav->truncated) return 0;
 	pm_log("carddav: %s: the list is not whole (%s)", what, g_dav->truncated ? "507" : "no end");
-	snprintf(why, whymax, "The contacts server's answer was cut short");
+	snprintf(why, whymax, "the contacts server's answer was cut short");
 	return 1;
+}
+
+/* (20 November 2026) why the contacts server said no, in words. The
+   contacts pass runs after the calendar's, with the same user name and
+   password: a 401 or 403 here, when the calendar took them, is most often
+   an app password made for calendars only (Fastmail's app passwords each
+   name what they may reach: "Calendars", "Contacts", "Mail"...) */
+static void card_refused(int status, const char *what, char *why, int whymax)
+{
+	pm_log("carddav: %s: status %d", what, status);
+	if (status == 401 || status == 403)
+		snprintf(why, whymax, "the password is not allowed to read contacts (check the app password's access)");
+	else if (status == 404 || status == 410)
+		snprintf(why, whymax, "the address book was not found on %s", g_t.host ? g_t.host : "the server");
+	else
+		snprintf(why, whymax, "the contacts server %s", http_status_words(status));
 }
 
 static int propfind(const char *path, int depth, const char *props, XsEnd end, HttpResp *r, char *why, int whymax)
@@ -329,22 +345,30 @@ static int discover(char *why, int whymax)
 {
 	HttpResp r;
 	char path[200];
-	int res, hops, attempt;
+	int res, hops, attempt, refused = 0;
 	const char *props = "<D:current-user-principal/><A:addressbook-home-set/>";
 	for (attempt = 0; attempt < 3 && !g_home[0]; attempt++) {
 		if (attempt == 0) pm_copy(path, "/.well-known/carddav", sizeof(path));
 		else if (attempt == 1) pm_copy(path, g_t.path && g_t.path[0] ? g_t.path : "/", sizeof(path));
 		else {
+			/* (20 November 2026) every place asked said "not with that
+			   password": said so, rather than guessing a path that can
+			   only be refused too */
+			if (refused) { card_refused(refused, "discovery", why, whymax); return CAL_RES_FAILED; }
 			snprintf(g_home, sizeof(g_home), "/dav/addressbooks/user/%s/", g_t.user);   /* Fastmail's */
+			pm_log("carddav: no address book home named: trying Fastmail's");
 			break;
 		}
 		for (hops = 0; hops < 4; hops++) {
 			memset(g_dav, 0, sizeof(*g_dav));
 			res = propfind(path, 0, props, disc_end, &r, why, whymax);
 			if (res != CAL_RES_OK) return res;
+			pm_log("carddav: discovery %s: status %d", path, r.status);
 			if (r.status >= 300 && r.status < 400 && r.location[0]) { http_follow(r.location, path, sizeof(path)); continue; }
 			break;
 		}
+		if (r.status == 401 || r.status == 403) refused = r.status;
+		else if (r.status == 207) refused = 0;
 		if (r.status != 207) continue;
 		if (g_dav->home[0]) { pm_copy(g_home, g_dav->home, sizeof(g_home)); break; }
 		if (g_dav->principal[0]) {
@@ -352,7 +376,9 @@ static int discover(char *why, int whymax)
 			memset(g_dav, 0, sizeof(*g_dav));
 			res = propfind(path, 0, props, disc_end, &r, why, whymax);
 			if (res != CAL_RES_OK) return res;
+			pm_log("carddav: principal %s: status %d", path, r.status);
 			if (r.status == 207 && g_dav->home[0]) { pm_copy(g_home, g_dav->home, sizeof(g_home)); break; }
+			if (r.status == 401 || r.status == 403) { card_refused(r.status, "the principal", why, whymax); return CAL_RES_FAILED; }
 		}
 	}
 	pm_log("carddav: address book home %s", g_home);
@@ -417,7 +443,7 @@ static int list_books(char *why, int whymax)
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) {
 		if (r.status == 404) { g_home[0] = 0; save_books(); }
-		snprintf(why, whymax, "The contacts server %s", http_status_words(r.status));
+		card_refused(r.status, "the address books", why, whymax);
 		return CAL_RES_FAILED;
 	}
 	if (not_whole("the address books", why, whymax)) return CAL_RES_FAILED;
@@ -443,7 +469,7 @@ static int list_books(char *why, int whymax)
 	}
 	if (def >= 0) strcat(g_book[def].flags, "D");
 	save_books();
-	if (!g_nbook) { snprintf(why, whymax, "There are no address books on %s", g_t.host); return CAL_RES_FAILED; }
+	if (!g_nbook) { snprintf(why, whymax, "the address book was not found on %s", g_t.host); return CAL_RES_FAILED; }
 	return CAL_RES_OK;
 }
 
@@ -537,7 +563,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 	g_listing = b;
 	res = propfind(b->href, 1, "<D:resourcetype/><D:getetag/>", etags_end, &r, why, whymax);
 	if (res != CAL_RES_OK) return res;
-	if (r.status != 207) { snprintf(why, whymax, "Could not read %s - the server %s", b->name, http_status_words(r.status)); return CAL_RES_FAILED; }
+	if (r.status != 207) { card_refused(r.status, b->name, why, whymax); return CAL_RES_FAILED; }
 	if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
 	/* cards gone from the server */
 	for (i = 0; i < g_ncard; ) {
@@ -572,7 +598,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 		res = http_request("REPORT", b->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
 			body, n, &r, sink, g_dav, why, whymax);
 		if (res != CAL_RES_OK) return res;
-		if (r.status != 207) { snprintf(why, whymax, "Could not read %s - the server %s", b->name, http_status_words(r.status)); return CAL_RES_FAILED; }
+		if (r.status != 207) { card_refused(r.status, b->name, why, whymax); return CAL_RES_FAILED; }
 		if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
 		*count += g_dav->count;
 		pm_progress("Fetching %s (%d)...", b->name, *count);
@@ -718,8 +744,8 @@ static int sync_now(int list_only, char *why, int whymax)
 	int res, i, sent = 0, total = 0, fetched = 0;
 	memset(&g_t, 0, sizeof(g_t));
 	calp_target(&g_t);
-	if (!g_t.host || !g_t.host[0]) { snprintf(why, whymax, "No contacts server set up"); return CAL_RES_FAILED; }
-	if (!g_t.pass || !g_t.pass[0]) { snprintf(why, whymax, "Password needed for the contacts"); return CAL_RES_NEED_PASS; }
+	if (!g_t.host || !g_t.host[0]) { snprintf(why, whymax, "no contacts server set up"); return CAL_RES_FAILED; }
+	if (!g_t.pass || !g_t.pass[0]) { snprintf(why, whymax, "a password is needed for the contacts"); return CAL_RES_NEED_PASS; }
 	if (!g_t.user) g_t.user = "";
 	snprintf(g_dir, sizeof(g_dir), "%scard%s", calp_dir(), CAL_SEP);
 	pm_mkdir(g_dir);
@@ -763,7 +789,7 @@ int card_sync(int list_only, char *why, int whymax)
 	int r;
 	if (!g_kw) g_kw = (CardWork *)psi_work_alloc(sizeof(CardWork));
 	if (!g_kw || vc_work(1) != 0) {
-		snprintf(why, whymax, "Not enough memory for the contacts");
+		snprintf(why, whymax, "not enough memory for the contacts");
 		r = CAL_RES_FAILED;
 	} else {
 		g_text = g_kw->text;
@@ -771,6 +797,11 @@ int card_sync(int list_only, char *why, int whymax)
 		g_dav = &g_kw->dav;
 		g_card = g_kw->card;
 		r = sync_now(list_only, why, whymax);
+		/* (20 November 2026) http.c says a 401 is "The calendar server did
+		   not accept the password": here it is the contacts', after the
+		   calendar took the same password (an app password for calendars
+		   only, most often) */
+		if (r == CAL_RES_LOGIN_FAILED) card_refused(401, "a request", why, whymax);
 	}
 	g_text = 0; g_data = 0; g_dav = 0; g_card = 0;
 	psi_work_free(g_kw); g_kw = 0;

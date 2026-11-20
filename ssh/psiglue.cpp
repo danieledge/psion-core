@@ -578,6 +578,7 @@ static int NifActive()
 // connection: cheap when it runs already (a semaphore looked for), and a
 // holder that ended (a Disconnect, the setting off and on) is started again.
 static int gKeepUp = -1;                  // the setting, read once per link (-1: not yet)
+static int gLinkOurs = 0;                 // (pg_link_end) a dial of this program found the link down and brought it up
 static int gHoldNoted = 0;                // a failure to start it already logged
 
 static int KeepUpSetting()
@@ -629,6 +630,32 @@ extern "C" int pg_link_keep()
 	{
 	gKeepUp = -1;                         // (asked once per idle spell: read it afresh)
 	return gNet && KeepUpSetting() ? 1 : 0;
+	}
+
+// (20 November 2026) For a program that connects for one job and is done
+// (PsiSync's sync): after it, the Psion Internet link goes down again if
+// this program brought it up (a dial found it down) and "Stay connected" is
+// off. A link that was up already - PsiMail's, say - is left as it is, and
+// with "Stay connected" on psihold.exe holds it, as after any program. The
+// modem route hangs up anyway (pg_hangup).
+static void NifStop(const char* aWhy);
+static void NetClose();
+extern "C" void pg_link_end()
+	{
+	if (!gLinkOurs)
+		return;
+	gLinkOurs = 0;
+	if (!gNet)
+		return;
+	gKeepUp = -1;
+	if (KeepUpSetting())
+		{
+		LinkLog("link: left up after use (Stay connected)");
+		return;
+		}
+	NetClose();                           // (the sockets and the session first)
+	NifStop("nifman: Stop - the link this program brought up, after use");
+	NifRelease();
 	}
 
 // NetDial's stages (TNetDialProgress) in plain words; 0 for the rest
@@ -2941,6 +2968,9 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			SetMsg(aResult, aResultMax, "Stopped");
 			return -1;
 			}
+		// (pg_link_end) was the link up before this dial? (NIFMAN's word: a
+		// link this program dialled earlier stays this program's)
+		int upBefore = NifOpen() && NifActive() == 1;
 		int r = PppDial(aResult, aResultMax);
 		if (r != 0 && gRetryDead && !gNoAt && !pg_quit_requested())
 			{
@@ -2958,6 +2988,11 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			}
 		gRetryDead = 0;
 		gPortStale = 0;              // (only valid between a Stop and the dial that follows it)
+		if (r == 0 && !upBefore)
+			{
+			gLinkOurs = 1;
+			LinkLog("link: brought up by this program");
+			}
 		return r;
 		}
 	if (!gCommOpen)

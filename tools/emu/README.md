@@ -124,5 +124,14 @@ How it works:
   (5500 bytes/s of wall-clock time, while the emulator runs at about 2.5 times
   real time) keeps well below that, but a modem without pacing could lose data.
 
-**Psion Internet (PPP)** isn't covered. The far end would have to be a PPP
-peer (pppd), which needs root and a network interface on the host.
+**Psion Internet (PPP)**: `fakeppp.py SOCKET --tcp 80=127.0.0.1:PORT` stands in
+for the Atom on that route, with no root and no network interface: AT
+commands, a numeric dial (`ATD777`) answering CONNECT, then a small PPP peer
+in Python (LCP, IPCP with the Atom's addresses, DNS answering every name,
+SNTP from the PC's clock, and TCP passed to the `--tcp` mappings). It logs
+each step (the dial, "ppp: lcp up", the names asked, "ntp: answered"), and
+"ppp: down" when the Psion stops answering its LCP echoes (a hang-up: the
+bridge carries no DTR). The Psion's own NetDial runs its modem script after
+the first send; the bridge has no carrier signal, so those lines are
+answered there as a modem would. Used for Internet time and PsiSync on the
+netBook emulator (November 2026).

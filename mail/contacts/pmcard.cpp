@@ -685,8 +685,8 @@ TInt PmCardSync::Run(RFs& aFs, const TDesC& aDir, TBool aCopyExisting, MPmCalObs
 		aSummary.Copy(sum.Left(Min(sum.Length(), aSummary.MaxLength())));
 		aPushed = pass->iSent > 0;
 		}
-	else if (err == KErrNotFound)
-		aSummary = _L("Contacts file not found - open Contacts once");
+	else if (err == KErrNotFound || err == KErrPathNotFound)
+		aSummary = _L("Contacts not synced - the Contacts file was not found (open Contacts once)");
 	else
 		{
 		// words, the number to the log (review R105; psierr.h's table)
@@ -696,9 +696,13 @@ TInt PmCardSync::Run(RFs& aFs, const TDesC& aDir, TBool aCopyExisting, MPmCalObs
 		case KErrDiskFull: aSummary = _L("Contacts not synced - the disk is full"); break;
 		case KErrNotReady: aSummary = _L("Contacts not synced - the card is not in"); break;
 		case KErrInUse:
-		case KErrLocked: aSummary = _L("Contacts not synced - Contacts is busy"); break;
+		case KErrLocked: aSummary = _L("Contacts not synced - Contacts is busy (close it and sync again)"); break;
+		case KErrAccessDenied: aSummary = _L("Contacts not synced - the Contacts file cannot be written"); break;
 		case KErrCorrupt: aSummary = _L("Contacts not synced - the file is damaged"); break;
-		default: aSummary = _L("Contacts not synced - for an unknown reason"); break;
+		case KErrArgument:
+		case KErrOverflow:
+		case KErrNotSupported: aSummary = _L("Contacts not synced - a contact from the server could not be read"); break;
+		default: aSummary = _L("Contacts not synced - for an unknown reason (the number is in the log)"); break;
 			}
 		TBuf8<40> l;
 		l.Format(_L8("contacts: the pass failed (%d)"), err);

@@ -76,6 +76,7 @@ nothing had to be renamed and `git log` follows every file back:
 | `ssh/psiglue.cpp` | the connection layer every engine links: the serial port and a Wi-Fi modem, or the Psion's own dial-up (PPP) |
 | `ssh/psishared.h`, `ssh/psibell.h` | the shared memory chunk between each program and its engine, and the doorbells |
 | `ssh/psilink.h` | `C:\System\Data\PsiLink.ini`, the connection settings every program shares |
+| `ssh/psidial.h` | the connection for a program that uses the socket server itself (Internet time, PsiBoot's updates): the Psion Internet route's first send to the modem, as psiglue's, and the link taken down after if it brought it up; a call on the modem route. Header only (c32.lib, nifman.lib) |
 | `ssh/psiwork.h` | work memory: the big buffers an engine needs only while it is connected or syncing, each a chunk of its own (`pg_work_alloc`, `pg_work_free`, `pg_work_trim` in `psiglue.cpp`; `calloc` on a PC), so that freeing gives the pages back to the Psion. Used by `tls13.c` (taken by `tls_connect`, given back by `tls_close`), `certcheck.c` (the chain, from Certificate to CertificateVerify), `caldav.c`, `carddav.c`, `vcard.c` (one sync) and PsiMail's IMAP buffers (while a mailbox is open) |
 | `ssh/psimem.h` | short of memory: the free-memory levels and the window-group messages (`trim`, `sleep`, `dialog`, `short`) between the programs and the launcher that watches the memory |
 | `ssh/pglinktest.cpp`, `.h` | Connection settings > Test, compiled into every program |
