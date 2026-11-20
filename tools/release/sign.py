@@ -13,6 +13,12 @@ Writes <sis>.sig:
 The apps check this with the public key built into them (KUpdateKey) and
 refuse any update that does not match. Keep the private key out of git.
 
+The version must be the .sis's own (its header: major at 0x28, minor at
+0x2a, as the installer compares them), with two digits after the point: a
+.sis signed as 1.13 that is really 1.12 would be installed by every copy,
+still say 1.12, and offer itself as an update for ever. A mismatch is
+refused and nothing is written.
+
 Uses the 'cryptography' package when it is installed, otherwise a plain
 Python Ed25519 (RFC 8032): slower, but a signature still takes well under
 a second.
@@ -80,6 +86,25 @@ def sign(seed, msg):
     return Ed25519PrivateKey.from_private_bytes(seed).sign(msg)
 
 
+def sis_version(path):
+    """the .sis's own version, (major, minor), from its header"""
+    d = open(path, "rb").read(0x2c)
+    if len(d) < 0x2c or int.from_bytes(d[4:8], "little") != 0x1000006D or int.from_bytes(d[8:12], "little") != 0x10000419:
+        raise SystemExit("%s: not an EPOC R5 .sis" % path)
+    return int.from_bytes(d[0x28:0x2a], "little"), int.from_bytes(d[0x2a:0x2c], "little")
+
+
+def check_version(path, version):
+    """refuses a version that is not the .sis's own (two digits: 1.13)"""
+    parts = version.split(".")
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit() or len(parts[1]) != 2:
+        raise SystemExit("version %r: two digits after the point, as the .pkg has it (1.13)" % version)
+    got = sis_version(path)
+    if version != "%d.%02d" % got:
+        raise SystemExit("%s is %d.%02d, not %s: build it with that version (the .pkg and the program's version), or sign the version it is"
+                         % (path, got[0], got[1], version))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("sis"); ap.add_argument("version")
@@ -87,6 +112,7 @@ def main():
     ap.add_argument("--key", default=None,
                     help="key file (hex seed); default: $PSITERM_RELEASE_KEY, else ~/.psiterm-signing/release.key")
     a = ap.parse_args()
+    check_version(a.sis, a.version)
     if a.key:
         hexseed = open(a.key).read()
     elif os.environ.get("PSITERM_RELEASE_KEY"):
