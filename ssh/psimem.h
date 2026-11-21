@@ -55,10 +55,10 @@
 const TInt KPsiMemMsgUid = 0x01000BA0;
 const TInt KPsiMemWatcherUid = 0x01000A9B;
 
-// the levels (free RAM, bytes)
-const TInt KPsiMemTidy = 3 * 1024 * 1024;       // under this: "trim"
-const TInt KPsiMemLow = 1536 * 1024;            // under this: "sleep" to programs behind; the user is told once
-const TInt KPsiMemVeryLow = 750 * 1024;         // under this: the dialog is offered
+// the levels (KPsiMemTidy, KPsiMemLow, KPsiMemVeryLow), the level word the
+// watcher publishes for engines, the off switch (PsiMem.ini) and
+// PsiMemCompress: psimemlvl.h, which the engines include alone
+#include "psimemlvl.h"
 
 #define KPsiMemTrim   _L8("trim")
 #define KPsiMemSleep  _L8("sleep")
@@ -124,6 +124,133 @@ inline TInt PsiMemFreeKb()
 	if (UserHal::MemoryInfo(m) != KErrNone || m().iFreeRamInBytes < 0)
 		return -1;
 	return m().iFreeRamInBytes >> 10;
+	}
+
+// (21 November 2026, BETA 1.08: the memory-pressure service) Every Coda
+// program with a window answers: the list the watcher sends its words to.
+// Never send them to Psion's own programs: CEikAppUi::ProcessMessageL takes
+// an unknown UID's message as a file to open.
+const TUint KPsiMemAnswerers[] =
+	{
+	0x01000a7a,     // PsiWeb: trim, sleep (its engine ends), sleepnow
+	0x01000ad8,     // PsiPDF
+	0x01000a7c,     // PsiMail: trim (the message, the engine's heap), sleep (the engine, offline)
+	0x01000a77,     // PsiTerm: trim (heap, idle views); "cannot" while a connection is open
+	0x01000afa,     // PsiAmp: trim (buffers when stopped)
+	0x01000a87,     // PsiLinux: trim (history, the runner's caches)
+	0x01000d40      // PsiFiles: trim (thumbnails, folders, the preview)
+	};
+const TInt KPsiMemAnswererCount = sizeof(KPsiMemAnswerers) / sizeof(KPsiMemAnswerers[0]);
+
+inline TBool PsiMemAnswers(TUint aUid)
+	{
+	for (TInt i = 0; i < KPsiMemAnswererCount; i++)
+		if (KPsiMemAnswerers[i] == aUid)
+			return ETrue;
+	return EFalse;
+	}
+
+// A program's side: which word a window-group message is, in its
+// ProcessMessageL (before CEikAppUi's, which would open it as a file):
+//   switch (PsiMemWordOf(aUid, aParams)) { case EPsiMemWordTrim: ... }
+// "sleep" and "sleepnow" differ only in that "sleepnow" wants an answer
+// (PsiMemAnswer) and comes whatever the memory free.
+enum TPsiMemWord { EPsiMemWordNone, EPsiMemWordTrim, EPsiMemWordSleep, EPsiMemWordSleepNow };
+
+inline TPsiMemWord PsiMemWordOf(TUid aUid, const TDesC8& aParams)
+	{
+	if (aUid.iUid != KPsiMemMsgUid)
+		return EPsiMemWordNone;
+	if (aParams == KPsiMemTrim)
+		return EPsiMemWordTrim;
+	if (aParams == KPsiMemSleep)
+		return EPsiMemWordSleep;
+	if (aParams == KPsiMemSleepNow)
+		return EPsiMemWordSleepNow;
+	return EPsiMemWordNone;
+	}
+
+// (the watcher) the word to every open program on the list; the number
+// it went to
+inline TInt PsiMemTellAll(RWsSession& aWs, const TDesC8& aWord)
+	{
+	const TUid msg = { KPsiMemMsgUid };
+	TApaTaskList tasks(aWs);
+	TInt n = 0;
+	for (TInt i = 0; i < KPsiMemAnswererCount; i++)
+		{
+		const TUid uid = { (TInt)KPsiMemAnswerers[i] };
+		TApaTask t = tasks.FindApp(uid);
+		if (t.Exists() && t.SendMessage(msg, aWord) == KErrNone)
+			n++;
+		}
+	return n;
+	}
+
+// The off switch, C:\System\Data\PsiMem.ini (psimemlvl.h says what each
+// line does): the watcher reads it, and Diagnostics or a Control panel
+// item writes it. Missing: the defaults.
+_LIT(KPsiMemIniFile, "C:\\System\\Data\\PsiMem.ini");
+struct TPsiMemIni
+	{
+	TBool iService;     // service=  (default 1)
+	TBool iClose;       // close=    (default 0)
+	TBool iTidy;        // tidy=     (default 1)
+	TUint32 Flags() const
+		{
+		return (iService ? KPsiMemFlagService : 0) | (iClose ? KPsiMemFlagClose : 0) | (iTidy ? KPsiMemFlagTidy : 0);
+		}
+	};
+
+inline void PsiMemIniLoad(RFs& aFs, TPsiMemIni& aIni)
+	{
+	aIni.iService = ETrue;
+	aIni.iClose = EFalse;
+	aIni.iTidy = ETrue;
+	RFile f;
+	if (f.Open(aFs, KPsiMemIniFile, EFileRead | EFileShareAny) != KErrNone)
+		return;
+	TBuf8<256> b;
+	TInt err = f.Read(b);
+	f.Close();
+	if (err != KErrNone)
+		return;
+	TPtrC8 rest(b);
+	while (rest.Length())
+		{
+		TInt nl = rest.Locate('\n');
+		TPtrC8 line(nl >= 0 ? rest.Left(nl) : rest);
+		rest.Set(nl >= 0 ? rest.Mid(nl + 1) : TPtrC8());
+		TInt eq = line.Locate('=');
+		if (eq <= 0 || eq + 1 >= line.Length())
+			continue;
+		TPtrC8 key(line.Left(eq));
+		TBool on = line[eq + 1] != '0';
+		if (key == _L8("service"))
+			aIni.iService = on;
+		else if (key == _L8("close"))
+			aIni.iClose = on;
+		else if (key == _L8("tidy"))
+			aIni.iTidy = on;
+		}
+	}
+
+inline TInt PsiMemIniSave(RFs& aFs, const TPsiMemIni& aIni)
+	{
+	TBuf8<64> b;
+	b.Format(_L8("service=%d\r\nclose=%d\r\ntidy=%d\r\n"), aIni.iService ? 1 : 0, aIni.iClose ? 1 : 0, aIni.iTidy ? 1 : 0);
+	RFile f;
+	TInt err = f.Replace(aFs, KPsiMemIniFile, EFileWrite | EFileShareAny);
+	if (err == KErrPathNotFound)
+		{
+		aFs.MkDirAll(KPsiMemIniFile);
+		err = f.Replace(aFs, KPsiMemIniFile, EFileWrite | EFileShareAny);
+		}
+	if (err != KErrNone)
+		return err;
+	err = f.Write(b);
+	f.Close();
+	return err;
 	}
 
 // "8.9 MB" (tenths, cut, not rounded up: never more than there is), "750 KB"

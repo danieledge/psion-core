@@ -31,6 +31,7 @@ _LIT(KPortName, "COMM::0");
 #include "psibell.h"
 #include "psilink.h"      // PsiLink.ini's "Stay connected", PsiHoldStart (psihold.exe)
 #include "pglinkseen.h"   // the link's last sign of life, shared by every engine
+#include "psimemlvl.h"    // pg_mem_level: the watcher's level word
 
 // EXEs may have writable static data on EPOC R5 (unlike .app DLLs), but
 // global objects with constructors are avoided: handles live on the heap.
@@ -3261,6 +3262,57 @@ extern "C" void* pg_work_alloc(unsigned long aBytes)
 	return 0;
 	}
 
+// (21 November 2026, MEM-30) work memory that grows: the address room
+// for aMax is set aside (no RAM) and aCommit of it is taken now; pg_work_grow
+// takes more in place (RChunk::Adjust: the block never moves, so pointers
+// into it stay good). For a list whose length is known only as it is read:
+// the contacts sync's 800 cards were 243 KB whatever the book held.
+extern "C" void* pg_work_alloc_max(unsigned long aCommit, unsigned long aMax)
+	{
+	if (aMax == 0 || aMax > 0x1000000 || aCommit > aMax)
+		return 0;
+	for (TInt i = 0; i < KPgWorkMax; i++)
+		{
+		if (gWorkBase[i])
+			continue;
+		TInt size = (TInt)((aCommit + 4095) & ~4095UL);
+		TInt max = (TInt)((aMax + 4095) & ~4095UL);
+		RChunk c;
+		if (c.CreateLocal(size, max) != KErrNone)
+			return 0;
+		gWork[i] = c.Handle();
+		gWorkBase[i] = c.Base();
+		gWorkSize[i] = size;
+		if (size)
+			Mem::FillZ(gWorkBase[i], size);
+		return gWorkBase[i];
+		}
+	return 0;
+	}
+
+// at least aBytes of the block taken (0), or -1 (no memory, or past its
+// maximum: the block is as it was)
+extern "C" int pg_work_grow(void* aPtr, unsigned long aBytes)
+	{
+	if (!aPtr)
+		return -1;
+	for (TInt i = 0; i < KPgWorkMax; i++)
+		if (gWorkBase[i] == (TUint8*)aPtr)
+			{
+			TInt size = (TInt)((aBytes + 4095) & ~4095UL);
+			if (size <= gWorkSize[i])
+				return 0;
+			RChunk c;
+			c.SetHandle(gWork[i]);
+			if (size > c.MaxSize() || c.Adjust(size) != KErrNone)
+				return -1;
+			Mem::FillZ(gWorkBase[i] + gWorkSize[i], size - gWorkSize[i]);
+			gWorkSize[i] = size;
+			return 0;
+			}
+	return -1;
+	}
+
 extern "C" void pg_work_free(void* aPtr)
 	{
 	if (!aPtr)
@@ -3284,6 +3336,17 @@ extern "C" void pg_work_free(void* aPtr)
 extern "C" void pg_work_trim(void)
 	{
 	User::Heap().Compress();
+	}
+
+// (21 November 2026) how short of memory the Psion is, for an engine with
+// no window (psimem.h's levels: 0 plenty, 1 trim, 2 sleep, 3 very low): the
+// watcher's word in the global chunk PsiMemLevel when it runs, else from the
+// free memory now. An engine looks at it where it is idle and gives back
+// what it can (psi_work_trim, its caches) at 1, and ends at 2 if nothing
+// would be lost, as its program would on "sleep".
+extern "C" int pg_mem_level(void)
+	{
+	return PsiMemLevelNow();
 	}
 
 #endif // PG_LINK_TEST_ONLY
