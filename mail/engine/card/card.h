@@ -7,7 +7,7 @@
  * its own character set, Windows-1252. Servers keep vCard 3.0 (RFC 2426)
  * or 4.0 (RFC 6350) in UTF-8, with much the Psion can't hold: photos,
  * labels, instant messaging, anniversaries, X- properties. So:
- *   - the server's card is kept as it came (the engine's files);
+ *   - the server's card is fetched again when the Psion changes it;
  *   - the Psion is given a 2.1 card of only what Contacts holds
  *     (vc_to_psion);
  *   - a change made on the Psion goes back into the server's own card:
@@ -35,10 +35,12 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
    see from one it would not */
 unsigned long vc_psion_hash(const char *in, int len);
 
-/* the three above work in 194 KB of work memory (psiwork.h), taken at the
-   first call (which fails, -1 or 0, if there is none). vc_work(0) gives it
-   back when the sync or the import is over; vc_work(1) takes it ahead:
-   0, or -1 if there is not enough memory */
+/* the three above work in 22 KB of work memory (psiwork.h), taken at the
+   first call (which fails, -1 or 0, if there is none); vc_merge takes 174 KB
+   more for the merge alone and gives it back (21 November 2026: all 196 KB
+   were held through the sync). vc_work(0) gives it back when the sync or
+   the import is over; vc_work(1) takes it ahead: 0, or -1 if there is not
+   enough memory */
 int vc_work(int on);
 
 /* ---- CardDAV (carddav.c): like cal_sync, the address books' changes

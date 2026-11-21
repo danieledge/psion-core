@@ -13,8 +13,12 @@
  *   <dir>card\index.txt   per card: bookid TAB href TAB etag TAB file TAB hash
  *                         (file: cXXXXXXXX, the FNV hash of the href;
  *                         hash: vc_psion_hash, what the Psion would see)
- *   <dir>card\cXXXXXXXX.vcf  the server's card, as it came
  *   <dir>card\cXXXXXXXX.v21  the Psion's (vc_to_psion), for Contacts to read
+ *                         (21 November 2026: the server's own card, which
+ *                         was kept beside it as cXXXXXXXX.vcf, up to 48 KB
+ *                         each with a photo, is no longer: nothing read it,
+ *                         a change fetches the card again; index.txt's
+ *                         file column still names it, as pmcard expects)
  *   <dir>card\push.txt    (Contacts half) changes to send, one per line:
  *                         N TAB key TAB bookid TAB v21 file TAB uid
  *                         M TAB key TAB href TAB etag TAB v21 file
@@ -27,6 +31,7 @@
 #include "calport.h"
 #include "cal.h"
 #include "card.h"
+#include "../../../ssh/psiwork.h"
 
 #define MAX_BOOKS 8
 #define MAX_CARDS 800
@@ -59,6 +64,8 @@ static Book g_book[MAX_BOOKS];
 static int g_nbook;
 static Card *g_card;
 static int g_ncard;
+static int g_cardcap;            /* (21 November 2026) cards g_card has room for */
+static int g_cardshort;          /* no memory for one more */
 static char g_home[200], g_where[200], g_dir[160];
 static char *g_text, *g_data;
 static CalTarget g_t;
@@ -104,6 +111,27 @@ static void card_file(const char *href, const char *ext, char *out, int max)
 	char name[24];
 	snprintf(name, sizeof(name), "c%08lX.%s", fnv(href), ext);
 	path_of(name, out, max);
+}
+
+/* (21 November 2026, MEM-30) room for one more card: the list is work
+   memory that grows in place, 64 cards (19 KB) at a time, up to MAX_CARDS
+   (it was 800 cards, 243 KB, whatever the book held). 0 when there is no
+   memory for it: the sync then stops with "not enough memory" rather than
+   go on with a list cut short */
+#define CARD_STEP 64
+static int card_room(void)
+{
+	int n;
+	if (g_ncard < g_cardcap) return 1;
+	if (g_cardcap >= MAX_CARDS) return 0;
+	n = g_cardcap + CARD_STEP < MAX_CARDS ? g_cardcap + CARD_STEP : MAX_CARDS;
+	if (psi_work_grow(g_card, (unsigned long)n * sizeof(Card)) != 0) {
+		pm_log("carddav: no memory for %d cards", n);
+		g_cardshort = 1;
+		return 0;
+	}
+	g_cardcap = n;
+	return 1;
 }
 
 /* ------------------------------------------------------------ the files */
@@ -171,18 +199,26 @@ static Book *book_by_id(const char *id)
 	return 0;
 }
 
+/* (21 November 2026) index.txt's first line says "novcf" once the old
+   cXXXXXXXX.vcf files have been removed (sync_now, once) */
+static int g_vcfgone;
+
 static void load_index(void)
 {
 	char path[200], line[600];
 	FILE *f;
 	g_ncard = 0;
+	g_vcfgone = 0;
 	path_of("index.txt", path, sizeof(path));
 	if (!(f = fopen(path, "r"))) return;
-	while (fgets(line, sizeof(line), f) && g_ncard < MAX_CARDS) {
+	while (fgets(line, sizeof(line), f)) {
 		char *p = line;
-		Card *c = &g_card[g_ncard];
+		Card *c;
 		line[strcspn(line, "\r\n")] = 0;
+		if (!strncmp(line, "#PSICARD1", 9) && strstr(line, "novcf")) g_vcfgone = 1;
 		if (line[0] == '#' || !line[0]) continue;
+		if (!card_room()) break;
+		c = &g_card[g_ncard];
 		memset(c, 0, sizeof(*c));
 		pm_copy(c->book, field(&p), sizeof(c->book));
 		pm_copy(c->href, field(&p), sizeof(c->href));
@@ -202,7 +238,7 @@ static int save_index(void)
 	path_of("index.txt", path, sizeof(path));
 	path_of("index.tmp", tmp, sizeof(tmp));
 	if (!(f = fopen(tmp, "w"))) return -1;
-	fprintf(f, "#PSICARD1\n");
+	fprintf(f, "#PSICARD1\tnovcf\n");
 	for (i = 0; i < g_ncard; i++) {
 		Card *c = &g_card[i];
 		char *slash;
@@ -262,20 +298,25 @@ static Dav *g_dav;
 /* What a sync works in is work memory (psiwork.h), taken by card_sync and
    given back when it ends: the buffers below were statics (95 KB of
    psisync.exe's RAM all day), and the list of cards and the two texts came
-   from the heap, which kept them. */
-#include "../../../ssh/psiwork.h"
+   from the heap, which kept them. (21 November 2026) The cards are a block
+   of their own that grows (card_room), and push_one's two buffers (70 KB)
+   are taken only when there are changes to send: a sync of a few contacts
+   took 646 KB at once, now about 160 KB. */
 typedef struct
 	{
 	char pf_body[700], pf_hdr[120];              /* propfind */
 	char me_v21[16384];                          /* multi_end */
 	char fb_body[4096];                          /* fetch_book */
-	char po_psion[16384], po_out[CARD_MAX + 4096];   /* push_one */
 	char text[TEXT_MAX];
 	char data[CARD_MAX];
 	Dav dav;
-	Card card[MAX_CARDS];
 	} CardWork;
 static CardWork *g_kw;
+typedef struct
+	{
+	char po_psion[16384], po_out[CARD_MAX + 4096];   /* push_one */
+	} PushWork;
+static PushWork *g_pw;
 
 static void sink(const char *data, int n, void *ctx) { xs_feed(&((Dav *)ctx)->x, data, n); }
 
@@ -489,7 +530,7 @@ static void etags_end(XmlScan *x, const char *name, const char *text, int len, v
 	else if (!strcmp(name, "response")) {
 		if (d->href[0] && !d->is_book && strcmp(d->href, g_listing->href)) {
 			Card *c = card_by_href(d->href);
-			if (!c && g_ncard < MAX_CARDS) {
+			if (!c && card_room()) {
 				c = &g_card[g_ncard++];
 				memset(c, 0, sizeof(*c));
 				pm_copy(c->href, d->href, sizeof(c->href));
@@ -533,11 +574,9 @@ static void multi_end(XmlScan *x, const char *name, const char *text, int len, v
 			char path[200];
 #define v21 (g_kw->me_v21)
 			int m = vc_to_psion(g_data, d->ndata, v21, sizeof(v21));
-			int bad;
-			card_file(c->href, "vcf", path, sizeof(path));
-			bad = write_file(path, g_data, d->ndata) != 0;
+			int bad = 0;
 			card_file(c->href, "v21", path, sizeof(path));
-			if (m > 0) bad |= write_file(path, v21, m) != 0;
+			if (m > 0) bad = write_file(path, v21, m) != 0;
 			else remove(path);
 			c->hash = vc_psion_hash(g_data, d->ndata);
 			/* the card is saved: its ETag (none, or not saved: "", so the
@@ -565,12 +604,13 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 	if (res != CAL_RES_OK) return res;
 	if (r.status != 207) { card_refused(r.status, b->name, why, whymax); return CAL_RES_FAILED; }
 	if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
+	if (g_cardshort) { snprintf(why, whymax, "not enough memory for the contacts"); return CAL_RES_FAILED; }
 	/* cards gone from the server */
 	for (i = 0; i < g_ncard; ) {
 		Card *c = &g_card[i];
 		if (!strcmp(c->book, b->id) && !c->seen) {
 			char path[200];
-			card_file(c->href, "vcf", path, sizeof(path)); remove(path);
+			if (!g_vcfgone) { card_file(c->href, "vcf", path, sizeof(path)); remove(path); }
 			card_file(c->href, "v21", path, sizeof(path)); remove(path);
 			g_card[i] = g_card[--g_ncard];
 			continue;
@@ -623,8 +663,8 @@ static void to_data(const char *d, int n, void *ctx)
 
 static int push_one(char *line, FILE *res, char *why, int whymax)
 {
-#define psion (g_kw->po_psion)
-#define out   (g_kw->po_out)
+#define psion (g_pw->po_psion)
+#define out   (g_pw->po_out)
 	char *p = line, *op = field(&p), *key = field(&p);
 	char hdr[200], href[260], path[200];
 	HttpResp r;
@@ -705,6 +745,12 @@ static int push_changes(int *n, char *why, int whymax)
 	path_of("push.txt", path, sizeof(path));
 	if (!(f = fopen(path, "r"))) return CAL_RES_OK;
 	while (fgets(line, sizeof(line), f)) if (line[0] != '#' && line[0] > ' ') total++;
+	if (!total) { fclose(f); remove(path); return CAL_RES_OK; }
+	if (!(g_pw = (PushWork *)psi_work_alloc(sizeof(PushWork)))) {
+		fclose(f);
+		snprintf(why, whymax, "not enough memory for the contacts");
+		return CAL_RES_FAILED;
+	}
 	fseek(f, 0, SEEK_SET);
 	path_of("pushed.txt", rpath, sizeof(rpath));
 	res = fopen(rpath, "a");
@@ -718,6 +764,7 @@ static int push_changes(int *n, char *why, int whymax)
 	}
 	fclose(f);
 	if (res) fclose(res);
+	psi_work_free(g_pw); g_pw = 0;
 	if (rc == CAL_RES_OK) remove(path);
 	else if (done > 0) {
 		char tmp[200];
@@ -753,6 +800,14 @@ static int sync_now(int list_only, char *why, int whymax)
 	snprintf(g_where, sizeof(g_where), "%s", g_t.host);
 	load_books();
 	load_index();
+	if (g_cardshort) { snprintf(why, whymax, "not enough memory for the contacts"); return CAL_RES_FAILED; }
+	/* (21 November 2026) the server's cards kept as .vcf by older builds:
+	   removed once (save_index then writes "novcf") */
+	if (!g_vcfgone) {
+		char path[200];
+		for (i = 0; i < g_ncard; i++) { card_file(g_card[i].href, "vcf", path, sizeof(path)); remove(path); }
+		pm_log("carddav: the old .vcf copies of %d cards removed", g_ncard);
+	}
 	res = list_books(why, whymax);
 	if (res != CAL_RES_OK) return res;
 	if (list_only) { snprintf(why, whymax, "%d address book%s", g_nbook, g_nbook == 1 ? "" : "s"); return CAL_RES_OK; }
@@ -788,14 +843,15 @@ int card_sync(int list_only, char *why, int whymax)
 {
 	int r;
 	if (!g_kw) g_kw = (CardWork *)psi_work_alloc(sizeof(CardWork));
-	if (!g_kw || vc_work(1) != 0) {
+	g_cardcap = 0; g_cardshort = 0; g_ncard = 0;
+	if (g_kw && !g_card) g_card = (Card *)psi_work_alloc_max(0, (unsigned long)MAX_CARDS * sizeof(Card));
+	if (!g_kw || !g_card || vc_work(1) != 0) {
 		snprintf(why, whymax, "not enough memory for the contacts");
 		r = CAL_RES_FAILED;
 	} else {
 		g_text = g_kw->text;
 		g_data = g_kw->data;
 		g_dav = &g_kw->dav;
-		g_card = g_kw->card;
 		r = sync_now(list_only, why, whymax);
 		/* (20 November 2026) http.c says a 401 is "The calendar server did
 		   not accept the password": here it is the contacts', after the
@@ -803,7 +859,8 @@ int card_sync(int list_only, char *why, int whymax)
 		   only, most often) */
 		if (r == CAL_RES_LOGIN_FAILED) card_refused(401, "a request", why, whymax);
 	}
-	g_text = 0; g_data = 0; g_dav = 0; g_card = 0;
+	g_text = 0; g_data = 0; g_dav = 0;
+	psi_work_free(g_card); g_card = 0; g_cardcap = 0; g_ncard = 0;
 	psi_work_free(g_kw); g_kw = 0;
 	vc_work(0);
 	psi_work_trim();

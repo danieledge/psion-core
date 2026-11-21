@@ -218,18 +218,26 @@ typedef struct
    memory (psiwork.h): taken at the first use, given back by vc_work(0)
    when the sync or the import is over. */
 #include "../../../ssh/psiwork.h"
+/* (21 November 2026, MEM-30) in two parts: what reading a server's card
+   needs (22 KB, held through the sync), and what merging a change from the
+   Psion into one needs (174 KB: the two PsProp lists), taken by vc_merge
+   for the merge alone. A sync with nothing to send held all 196 KB. */
 typedef struct
 	{
 	char tp_line[VLINE], tp_val[VLINE], tp_pr[80], tp_fn[VLINE];   /* vc_to_psion */
 	char hash_tmp[16384];                                          /* vc_psion_hash */
+	} VcWork;
+static VcWork *g_vw;
+typedef struct
+	{
 	char rp_line[VLINE];                                           /* read_psion */
 	char sk_tmp[16384];                                            /* same_kind */
 	PsProp sk_mine[MAXP];
 	PsProp mg_ps[MAXP];                                            /* vc_merge */
 	char mg_line[VLINE];
 	PsProp mg_f;
-	} VcWork;
-static VcWork *g_vw;
+	} VcMerge;
+static VcMerge *g_vm;
 
 int vc_work(int on)
 {
@@ -238,6 +246,7 @@ int vc_work(int on)
 		return g_vw ? 0 : -1;
 	}
 	if (g_vw) { psi_work_free(g_vw); g_vw = 0; }
+	if (g_vm) { psi_work_free(g_vm); g_vm = 0; }
 	return 0;
 }
 
@@ -350,7 +359,7 @@ unsigned long vc_psion_hash(const char *in, int len)
 /* ---------------------------------------------------------------- back to the server */
 
 /* the Psion's 2.1 card read (QP decoded, cp1252) */
-#define line (g_vw->rp_line)
+#define line (g_vm->rp_line)
 static int read_psion(const char *in, int len, PsProp *out, int max)
 {
 	int pos = 0, n, k = 0;
@@ -464,8 +473,8 @@ static void write30(Buf *o, const PsProp *pp, int v4)
 
 /* the server card's properties of one kind, read as the Psion's would be,
    to see whether the Psion changed that kind */
-#define tmp  (g_vw->sk_tmp)
-#define mine (g_vw->sk_mine)
+#define tmp  (g_vm->sk_tmp)
+#define mine (g_vm->sk_mine)
 static int same_kind(const char *orig, int olen, const PsProp *ps, int nps, int kind)
 {
 	int n = vc_to_psion(orig, olen, tmp, sizeof(tmp)), m, i, j, a = 0, b = 0;
@@ -502,10 +511,10 @@ static int fn_from_n(const PsProp *ps, int nps, PsProp *fn)
 	return fn->value[0] != 0;
 }
 
-#define ps   (g_vw->mg_ps)
-#define line (g_vw->mg_line)
-#define f    (g_vw->mg_f)
-int vc_merge(const char *orig, int olen, const char *psion, int plen, const char *uid, char *out, int max)
+#define ps   (g_vm->mg_ps)
+#define line (g_vm->mg_line)
+#define f    (g_vm->mg_f)
+static int merge(const char *orig, int olen, const char *psion, int plen, const char *uid, char *out, int max)
 {
 	char keep[NKINDS], groups[16][24];
 	int nps, i, n, pos = 0, v4 = 0, ng = 0, has_fn = 0;
@@ -514,7 +523,6 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
 	o.b = out; o.n = 0; o.max = max; o.bad = 0;
 	if (max < 2) return -1;
 	out[0] = 0;
-	if (vc_work(1) != 0) return -1;
 	nps = read_psion(psion, plen, ps, MAXP);
 	if (!orig || olen <= 0 || !orig[0]) {
 		/* a new card, 3.0 */
@@ -576,3 +584,13 @@ int vc_merge(const char *orig, int olen, const char *psion, int plen, const char
 #undef ps
 #undef line
 #undef f
+
+int vc_merge(const char *orig, int olen, const char *psion, int plen, const char *uid, char *out, int max)
+{
+	int r;
+	if (vc_work(1) != 0) return -1;
+	if (!(g_vm = (VcMerge *)psi_work_alloc(sizeof(VcMerge)))) return -1;
+	r = merge(orig, olen, psion, plen, uid, out, max);
+	psi_work_free(g_vm); g_vm = 0;
+	return r;
+}
