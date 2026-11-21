@@ -4,31 +4,34 @@
 // watcher) and by psiglue.cpp (the engines: pg_mem_level, psiwork.h), so it
 // needs only the kernel's headers. No writable statics (an .app is a DLL).
 //
-// The levels, from the free memory (psimem.h's figures):
-//   0  3 MB or more free: nothing to do (a program trims itself when it
-//      has been behind a while, by its own rule)
-//   1  under 3 MB  (KPsiMemTidy): "trim": caches, decoded pictures, the
-//      heap's free end; the watcher calls User::CompressAllHeaps
-//   2  under 1.5 MB (KPsiMemLow): "sleep" to programs behind; engines with
-//      no transfer running end (their program starts them again)
-//   3  under 750 KB (KPsiMemVeryLow), or a program said "short": the Free
-//      memory dialog is offered; with "close programs behind" ticked the
-//      watcher closes them, least recently used first (never the one in
-//      front, never one that says "cannot")
+// The interface is the one group M1 proposed for the netBook's watcher
+// (psion-netbook psisys/psimemsvc.h, whose core half steps aside when
+// PSIMEM_LEVEL is defined here): copied as it is.
 //
-// The watcher (PsiHub) publishes the level it has judged, and what it saw,
-// in the global chunk "PsiMemLevel" (PsiMemPublish), which it keeps open;
-// anyone reads it with PsiMemLevelNow, which falls back to the free memory
-// now when no watcher runs (a card-less start, the 5mx without Coda).
+// The state, one global chunk "PsiMemLevel" of one page, made by whoever
+// needs it first (the watcher, or a program that answers) and kept while
+// anyone holds it open:
+//   iLevel   0 normal (3 MB or more free), 1 tidy (under 3 MB), 2 low
+//            (under 1.5 MB), 3 critical (under 750 KB): written by the
+//            watcher (PsiHub; PsiStart when PsiHub is not running) at each
+//            look; -1 while the service is off (PsiMem.ini level=0).
+//            Engines with no window group (psimail.exe, psisync.exe,
+//            psiweb.exe) read it in their idle tick (PsiMemLevelNow, or
+//            psi_mem_level() in C) instead of a message: at 1 or more they
+//            give back their heap's free end (psi_work_trim), at 2 or more
+//            they end if nothing is being fetched, as on "sleep".
+//   iAnswer  the UIDs of the programs running now that take "trim" and
+//            "sleep" (KPsiMemMsgUid): PsiMemRegister at the program's
+//            start, PsiMemUnregister at its end. Only these (and PsiWeb
+//            and PsiPDF) are sent the words: CEikAppUi::ProcessMessageL
+//            reads an unknown message UID as a file to open, so a program
+//            that does not answer must never register.
+//   iBusy    beside each UID: non-zero while that program must not be
+//            closed or put to sleep (PsiMemBusy: a transfer, a dialog up).
 //
-// The off switch: C:\System\Data\PsiMem.ini, lines "name=value":
-//   service=0   the watcher sends no "trim"/"sleep" beyond what it did in
-//               1.07 (PsiWeb and PsiPDF) and publishes level 0, so engines
-//               and programs behave as before; default 1
-//   close=1     close programs behind at level 3; default 0 (ask, as now)
-//   tidy=0      no User::CompressAllHeaps after a program closes or when
-//               idle (P2-03); default 1
-// A missing file or line is the default.
+// The off switch, the watcher's options (PsiMem.ini: level=, idletrim=,
+// close=), PsiMemPublish and PsiMemTellAll are the watcher's side, in the
+// netBook's psisys/psimemsvc.h.
 
 #ifndef __PSIMEMLVL_H
 #define __PSIMEMLVL_H
@@ -41,100 +44,135 @@ const TInt KPsiMemTidy = 3 * 1024 * 1024;       // under this: "trim"
 const TInt KPsiMemLow = 1536 * 1024;            // under this: "sleep" to programs behind; the user is told once
 const TInt KPsiMemVeryLow = 750 * 1024;         // under this: the dialog is offered
 
-enum { EPsiMemPlenty = 0, EPsiMemTrimLevel = 1, EPsiMemSleepLevel = 2, EPsiMemVeryLowLevel = 3 };
+#ifndef PSIMEM_LEVEL
+#define PSIMEM_LEVEL
 
-// the level the free memory alone gives (bytes; <0 unknown: 0)
-inline TInt PsiMemLevelOf(TInt aFreeBytes)
-	{
-	if (aFreeBytes < 0 || aFreeBytes >= KPsiMemTidy)
-		return EPsiMemPlenty;
-	if (aFreeBytes >= KPsiMemLow)
-		return EPsiMemTrimLevel;
-	if (aFreeBytes >= KPsiMemVeryLow)
-		return EPsiMemSleepLevel;
-	return EPsiMemVeryLowLevel;
-	}
-
-inline TInt PsiMemFreeBytes()
-	{
-	TMemoryInfoV1Buf m;
-	if (UserHal::MemoryInfo(m) != KErrNone)
-		return -1;
-	return m().iFreeRamInBytes;
-	}
-
-// the watcher's page (the chunk's first bytes)
 _LIT(KPsiMemLevelChunk, "PsiMemLevel");
-const TUint32 KPsiMemLevelMagic = 0x4c6d7350;   // 'PsmL'
+const TUint32 KPsiMemLevelMagic = 0x764c4d50;      // 'PMLv'
+const TInt KPsiMemAnswerMax = 16;
+
+enum TPsiMemLevel { EPsiMemNormal = 0, EPsiMemTidyLevel = 1, EPsiMemLowLevel = 2, EPsiMemCritical = 3 };
+
 struct TPsiMemState
 	{
 	TUint32 iMagic;
-	TInt iLevel;            // as judged by the watcher (0 when service=0)
-	TInt iFreeKb;           // what it saw
-	TUint iTick;            // User::TickCount() then
-	TUint32 iFlags;         // KPsiMemFlag...
-	TInt iSpare[3];
+	TInt32 iVersion;            // 1
+	TInt32 iLevel;              // TPsiMemLevel; -1: the service is off
+	TInt32 iFreeKb;
+	TUint32 iChange;            // +1 at each change of level
+	TUint32 iWatcher;           // the UID of the program that wrote iLevel
+	TUint32 iTick;              // User::TickCount() / 64 at that look
+	TUint32 iSpare;
+	TUint32 iAnswer[KPsiMemAnswerMax];
+	TUint32 iBusy[KPsiMemAnswerMax];
 	};
-const TUint32 KPsiMemFlagService = 1;   // service=1 (the words are sent)
-const TUint32 KPsiMemFlagClose = 2;     // close=1
-const TUint32 KPsiMemFlagTidy = 4;      // tidy=1
 
-// the watcher's state, if it runs: ETrue and aState filled
-inline TBool PsiMemReadState(TPsiMemState& aState)
+inline TInt PsiMemLevelOf(TInt aFreeBytes)
 	{
-	RChunk c;
-	if (c.OpenGlobal(KPsiMemLevelChunk, ETrue) != KErrNone)
-		return EFalse;
-	TBool ok = EFalse;
-	if (c.Size() >= (TInt)sizeof(TPsiMemState))
-		{
-		Mem::Copy(&aState, c.Base(), sizeof(TPsiMemState));
-		ok = aState.iMagic == KPsiMemLevelMagic;
-		}
-	c.Close();
-	return ok;
+	if (aFreeBytes < 0)
+		return EPsiMemNormal;
+	if (aFreeBytes < KPsiMemVeryLow)
+		return EPsiMemCritical;
+	if (aFreeBytes < KPsiMemLow)
+		return EPsiMemLowLevel;
+	if (aFreeBytes < KPsiMemTidy)
+		return EPsiMemTidyLevel;
+	return EPsiMemNormal;
 	}
 
-// the level now: the watcher's when it runs and has looked in the last
-// 30 s, else from the free memory now; with the service off, 0
-inline TInt PsiMemLevelNow()
+// the state, opened (made if aMake and not there): NULL if it cannot be
+inline TPsiMemState* PsiMemStateOpen(RChunk& aChunk, TBool aMake)
 	{
-	TPsiMemState s;
-	if (PsiMemReadState(s))
+	TInt err = aChunk.OpenGlobal(KPsiMemLevelChunk, EFalse);
+	if (err != KErrNone && aMake)
 		{
-		if (!(s.iFlags & KPsiMemFlagService))
-			return EPsiMemPlenty;
-		TUint age = User::TickCount() - s.iTick;     // (ticks of 1/64 s on the Psion)
-		if (age < 30 * 64)
-			return s.iLevel;
-		}
-	return PsiMemLevelOf(PsiMemFreeBytes());
-	}
-
-// (the watcher) its judgement, published; aChunk stays open in the
-// watcher (the chunk lives while a handle is open). KErrNone or an error.
-inline TInt PsiMemPublish(RChunk& aChunk, TInt aLevel, TInt aFreeKb, TUint32 aFlags)
-	{
-	if (aChunk.Handle() == 0)
-		{
-		TInt err = aChunk.CreateGlobal(KPsiMemLevelChunk, 4096, 4096);
+		err = aChunk.CreateGlobal(KPsiMemLevelChunk, 4096, 4096);
 		if (err == KErrAlreadyExists)
 			err = aChunk.OpenGlobal(KPsiMemLevelChunk, EFalse);
-		if (err != KErrNone)
-			return err;
+		else if (err == KErrNone)
+			{
+			TPsiMemState* s = (TPsiMemState*)aChunk.Base();
+			Mem::FillZ(s, sizeof(TPsiMemState));
+			s->iVersion = 1;
+			s->iLevel = -1;
+			s->iFreeKb = -1;
+			s->iMagic = KPsiMemLevelMagic;
+			}
 		}
+	if (err != KErrNone)
+		return NULL;
 	TPsiMemState* s = (TPsiMemState*)aChunk.Base();
-	s->iLevel = (aFlags & KPsiMemFlagService) ? aLevel : EPsiMemPlenty;
-	s->iFreeKb = aFreeKb;
-	s->iTick = User::TickCount();
-	s->iFlags = aFlags;
-	s->iMagic = KPsiMemLevelMagic;
+	if (aChunk.Size() < (TInt)sizeof(TPsiMemState) || s->iMagic != KPsiMemLevelMagic)
+		{
+		aChunk.Close();
+		return NULL;
+		}
+	return s;
+	}
+
+// the level now (an engine's idle tick): TPsiMemLevel, or -1 when no
+// watcher has said (no chunk, or the service off)
+inline TInt PsiMemLevelNow()
+	{
+	RChunk c;
+	TPsiMemState* s = PsiMemStateOpen(c, EFalse);
+	if (!s)
+		return -1;
+	TInt level = s->iLevel;
+	c.Close();
+	return level;
+	}
+
+// a program that takes "trim" and "sleep" says so at its start: it keeps
+// aChunk open until PsiMemUnregister (at its end, or never: the slot is
+// freed by the watcher once the program has gone)
+inline TInt PsiMemRegister(RChunk& aChunk, TUint aUid)
+	{
+	TPsiMemState* s = PsiMemStateOpen(aChunk, ETrue);
+	if (!s)
+		return KErrNotFound;
+	TInt freeAt = -1;
+	for (TInt i = 0; i < KPsiMemAnswerMax; i++)
+		{
+		if (s->iAnswer[i] == aUid)
+			return KErrNone;
+		if (!s->iAnswer[i] && freeAt < 0)
+			freeAt = i;
+		}
+	if (freeAt < 0)
+		return KErrOverflow;
+	s->iBusy[freeAt] = 0;
+	s->iAnswer[freeAt] = aUid;
 	return KErrNone;
 	}
 
-// The engine's heap given back as far as it will go: the bytes returned
-// (User::Heap().Compress() returns only the free cell at the top: what is
-// freed below the top stays until the cells above it go)
+// busy (not to be closed or slept by the service) or not
+inline void PsiMemBusy(RChunk& aChunk, TUint aUid, TBool aBusy)
+	{
+	if (!aChunk.Handle())
+		return;
+	TPsiMemState* s = (TPsiMemState*)aChunk.Base();
+	for (TInt i = 0; i < KPsiMemAnswerMax; i++)
+		if (s->iAnswer[i] == aUid)
+			s->iBusy[i] = aBusy;
+	}
+
+inline void PsiMemUnregister(RChunk& aChunk, TUint aUid)
+	{
+	if (!aChunk.Handle())
+		return;
+	TPsiMemState* s = (TPsiMemState*)aChunk.Base();
+	for (TInt i = 0; i < KPsiMemAnswerMax; i++)
+		if (s->iAnswer[i] == aUid)
+			s->iAnswer[i] = s->iBusy[i] = 0;
+	aChunk.Close();
+	}
+
+#endif // PSIMEM_LEVEL
+
+// The program's own heap given back as far as it will go: the bytes
+// returned. (User::Heap().Compress() returns only the free cell at the
+// top: what is freed below the top stays until the cells above it go.)
 inline TInt PsiMemCompress()
 	{
 	RHeap& h = User::Heap();

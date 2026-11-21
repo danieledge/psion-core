@@ -16,8 +16,9 @@
  * (21 November 2026) A block that grows in place: psi_work_alloc_max(n,
  * max) sets aside room for max and takes n of it; psi_work_grow(p, n)
  * takes more (0, or -1 and the block as it was). The block never moves.
- * psi_mem_level(): how short of memory the Psion is (psimemlvl.h: 0 plenty,
- * 1 trim, 2 sleep, 3 very low), for an engine to look at where it idles.
+ * psi_mem_level(): how short of memory the Psion is (psimemlvl.h: 0 normal,
+ * 1 tidy, 2 low, 3 critical; -1 no watcher has said: behave as before),
+ * for an engine to look at where it idles.
  */
 #ifndef PSI_WORK_H
 #define PSI_WORK_H
@@ -47,6 +48,6 @@ int pg_mem_level(void);
 #define psi_work_trim()   ((void)0)
 #define psi_work_alloc_max(n, m) calloc(1, (m))
 #define psi_work_grow(p, n) ((p) ? 0 : -1)
-#define psi_mem_level()   0
+#define psi_mem_level()   (-1)
 #endif
 #endif

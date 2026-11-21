@@ -3339,11 +3339,11 @@ extern "C" void pg_work_trim(void)
 	}
 
 // (21 November 2026) how short of memory the Psion is, for an engine with
-// no window (psimem.h's levels: 0 plenty, 1 trim, 2 sleep, 3 very low): the
-// watcher's word in the global chunk PsiMemLevel when it runs, else from the
-// free memory now. An engine looks at it where it is idle and gives back
-// what it can (psi_work_trim, its caches) at 1, and ends at 2 if nothing
-// would be lost, as its program would on "sleep".
+// no window (psimemlvl.h: 0 normal, 1 tidy, 2 low, 3 critical): the
+// watcher's level in the global chunk PsiMemLevel, -1 when no watcher has
+// said (none running, or the service off). An engine looks at it where it
+// is idle and gives back what it can (psi_work_trim, its caches) at 1, and
+// ends at 2 if nothing would be lost, as its program would on "sleep".
 extern "C" int pg_mem_level(void)
 	{
 	return PsiMemLevelNow();
