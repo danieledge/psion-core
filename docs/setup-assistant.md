@@ -63,9 +63,10 @@ no new file version, no changed standards.
 
 Flow control, Dial-up: first send and After use are left as they are.
 
-**First choice shown.** If `PsiLink.ini` is there, its values. Otherwise the
-machine decides: a screen 400 or more high (the netBook, the Series 7)
-offers *Network card or dial-up*, the 5mx *Atom modem*; both *Direct*.
+**First choice shown.** The program's own current route: `PsiLink.ini`'s
+values if it is there, otherwise the standard settings (the modem at 115200
+baud, so *Atom modem*, *Direct*) on every machine. Cancel keeps that route,
+so what the dialog shows is what the program uses.
 
 **Annotations** (under each choice, one paragraph, changing with it;
 `pg_su_conn_note`, `pg_su_helper_note`):

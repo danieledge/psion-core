@@ -84,22 +84,20 @@ static inline void pg_su_copy(char* aDst, const char* aSrc)
 	aDst[i] = 0;
 	}
 
-/* What to show first. aHaveFile: PsiLink.ini was there (aLink holds it);
- * else aLink holds the standard settings and the first choice follows the
- * machine: aTall (a screen 400 or more high: the netBook, the Series 7)
- * means the network card, else the Atom modem. */
+/* What to show first: the route aLink gives, whether it is PsiLink.ini
+ * (aHaveFile) or the standard settings (no file yet): the program's own
+ * current route, on every machine. */
 static inline void pg_su_from_link(const PgSuLink* aLink, int aHaveFile, int aTall, PgSuChoice* aOut)
 	{
 	aOut->baud_index = aLink->baud_index >= 0 && aLink->baud_index <= 4 ? aLink->baud_index : 4;
 	aOut->host[0] = 0;
 	aOut->port = PG_SU_PSIPROXY_PORT;
-	if (!aHaveFile)
-		{
-		aOut->conn = aTall ? PG_SU_CONN_NET : PG_SU_CONN_ATOM;
-		aOut->helper = PG_SU_HELPER_DIRECT;
-		aOut->baud_index = 4;
-		return;
-		}
+	/* no file yet: aLink holds the program's standard settings (TPsiLink::
+	   SetDefaults), and the dialog opens on that route, the one the program
+	   uses until it is changed (UI-156; it was the network card on a tall
+	   screen whatever the program used). aHaveFile and aTall are kept for
+	   the callers */
+	(void)aHaveFile; (void)aTall;
 	int atomHelper = aLink->use_proxy && pg_su_is_atom_host(aLink->host);
 	if (aLink->net_mode)
 		aOut->conn = PG_SU_CONN_NET;

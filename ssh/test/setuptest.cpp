@@ -25,9 +25,10 @@ int main()
 	PgSuChoice c;
 	PgSuLink std = Link(0, 4, 0, "", 8081);
 
-	// a new Psion: the netBook offers the network card, the 5mx the Atom
+	// a new Psion: the program's own standard route (the modem at 115200),
+	// on every machine (UI-156)
 	pg_su_from_link(&std, 0, 1, &c);
-	CHECK(c.conn == PG_SU_CONN_NET && c.helper == PG_SU_HELPER_DIRECT && c.port == 8081 && !c.host[0]);
+	CHECK(c.conn == PG_SU_CONN_ATOM && c.helper == PG_SU_HELPER_DIRECT && c.port == 8081 && !c.host[0] && c.baud_index == 4);
 	pg_su_from_link(&std, 0, 0, &c);
 	CHECK(c.conn == PG_SU_CONN_ATOM && c.helper == PG_SU_HELPER_DIRECT && c.baud_index == 4);
 
