@@ -781,5 +781,6 @@ TInt PmCardSync::ImportFile(RFs& aFs, const TDesC& aVcf, const TDesC& aTemp, TIn
 	{
 	aCount = aSkipped = 0;
 	TRAPD(err, ImportFileL(aFs, aVcf, aTemp, aCount, aSkipped));
+	aFs.Delete(aTemp);                   // (21 November 2026, MEM-35: left on C: when the import left)
 	return err;
 	}

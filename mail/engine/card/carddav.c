@@ -661,6 +661,17 @@ static void to_data(const char *d, int n, void *ctx)
 	if (n > 0) { memcpy(g_data + *len, d, n); *len += n; }
 }
 
+/* (21 November 2026, MEM-35) the Psion's export of the card (o<id>.v21) is
+   removed with every answer written for it: it was removed only after a
+   PUT, so a card gone from the server, a conflict or a failure left it on
+   C: for good. Not on a line that is tried again (rc not CAL_RES_OK). */
+static int pushed_file(FILE *res, const char *key, const char *what, const char *href, const char *path)
+{
+	pushed(res, key, what, href);
+	if (path[0]) remove(path);
+	return CAL_RES_OK;
+}
+
 static int push_one(char *line, FILE *res, char *why, int whymax)
 {
 #define psion (g_pw->po_psion)
@@ -669,18 +680,19 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 	char hdr[200], href[260], path[200];
 	HttpResp r;
 	int rc, len, plen, olen;
+	path[0] = 0;
 	if (op[0] == 'N') {
 		Book *b = book_by_id(field(&p));
 		char *v21 = field(&p), *uid = field(&p);
 		int i;
-		if (!b) { pushed(res, key, "failed", ""); return CAL_RES_OK; }
+		if (v21[0]) path_of(v21, path, sizeof(path));
+		if (!b) return pushed_file(res, key, "failed", "", path);
 		for (i = 0; uid[i]; i++)
 			if (!((uid[i] >= '0' && uid[i] <= '9') || (uid[i] >= 'a' && uid[i] <= 'z') || (uid[i] >= 'A' && uid[i] <= 'Z') || uid[i] == '-')) uid[i] = '-';
-		path_of(v21, path, sizeof(path));
-		plen = read_file(path, psion, sizeof(psion));
-		if (plen < 0 || !uid[0]) { pushed(res, key, "failed", ""); return CAL_RES_OK; }
+		plen = path[0] ? read_file(path, psion, sizeof(psion)) : -1;
+		if (plen < 0 || !uid[0]) return pushed_file(res, key, "failed", "", path);
 		olen = vc_merge(0, 0, psion, plen, uid, out, sizeof(out));
-		if (olen < 0) { pushed(res, key, "failed", ""); return CAL_RES_OK; }
+		if (olen < 0) return pushed_file(res, key, "failed", "", path);
 		snprintf(href, sizeof(href), "%s%s.vcf", b->href, uid);
 		rc = http_request("PUT", href, "Content-Type: text/vcard; charset=utf-8\r\nIf-None-Match: *\r\n",
 			out, olen, &r, 0, 0, why, whymax);
@@ -695,6 +707,7 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		char *h = field(&p), *etag = field(&p), *v21 = op[0] == 'M' ? field(&p) : (char *)"";
 		Book *b;
 		int i;
+		if (v21[0]) path_of(v21, path, sizeof(path));
 		pm_copy(href, h, sizeof(href));
 		for (i = 0; i < g_nbook; i++) {
 			int n = (int)strlen(g_book[i].href);
@@ -713,15 +726,14 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		len = 0;
 		rc = http_request("GET", href, "", 0, 0, &r, to_data, &len, why, whymax);
 		if (rc != CAL_RES_OK) return rc;
-		if (r.status == 404) { pushed(res, key, "gone", href); return CAL_RES_OK; }
-		if (r.status != 200 || len >= CARD_MAX - 1) { pushed(res, key, "failed", href); return CAL_RES_OK; }
-		if (etag[0] && r.etag[0] && strcmp(etag, r.etag)) { pushed(res, key, "conflict", href); return CAL_RES_OK; }
+		if (r.status == 404) return pushed_file(res, key, "gone", href, path);
+		if (r.status != 200 || len >= CARD_MAX - 1) return pushed_file(res, key, "failed", href, path);
+		if (etag[0] && r.etag[0] && strcmp(etag, r.etag)) return pushed_file(res, key, "conflict", href, path);
 		g_data[len] = 0;
-		path_of(v21, path, sizeof(path));
-		plen = read_file(path, psion, sizeof(psion));
-		if (plen < 0) { pushed(res, key, "failed", href); return CAL_RES_OK; }
+		plen = path[0] ? read_file(path, psion, sizeof(psion)) : -1;
+		if (plen < 0) return pushed_file(res, key, "failed", href, path);
 		olen = vc_merge(g_data, len, psion, plen, 0, out, sizeof(out));
-		if (olen < 0) { pushed(res, key, "failed", href); return CAL_RES_OK; }
+		if (olen < 0) return pushed_file(res, key, "failed", href, path);
 		snprintf(hdr, sizeof(hdr), "Content-Type: text/vcard; charset=utf-8\r\n%s%s%s",
 			r.etag[0] ? "If-Match: " : "", r.etag, r.etag[0] ? "\r\n" : "");
 		rc = http_request("PUT", href, hdr, out, olen, &r, 0, 0, why, whymax);
