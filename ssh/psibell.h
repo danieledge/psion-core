@@ -84,6 +84,7 @@ inline void PsiBellTakeBack(PsiBell* aBell, TRequestStatus& aStatus)
 				{
 				timer.Cancel();
 				User::WaitForRequest(ts);
+				timer.Close();               // (21 November 2026, MEM-36: it was left open, a handle each time)
 				return;                      // the ringer's completion, signal taken
 				}
 			}
