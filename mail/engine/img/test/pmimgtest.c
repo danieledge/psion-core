@@ -38,6 +38,20 @@ int main(int argc, char **argv)
 	if (!f || fscanf(f, "%d %d %d", &m0[0], &m0[1], &m0[2]) != 3) { printf("no %s: run mkpics.py\n", path); return 1; }
 	fclose(f);
 	/* the palette: EPOC's (spot checks: TRgb::Color256's 0, 1, 108, 128, 255) */
+	/* pmimg_opts_room: half of what is free above 1.5 MB, at least 64 KB */
+	{
+		PmImgOpts r;
+		pmimg_opts_fill(&r, 0);
+		pmimg_opts_room(&r, 0);
+		CHECK(r.max_full_bytes == 640L * 1024L);
+		pmimg_opts_room(&r, 1536L * 1024L + 400L * 1024L);
+		CHECK(r.max_full_bytes == 200L * 1024L);
+		pmimg_opts_room(&r, 512L * 1024L);
+		CHECK(r.max_full_bytes == 64L * 1024L);
+		pmimg_opts_fill(&r, 0);
+		pmimg_opts_room(&r, 20L * 1024L * 1024L);
+		CHECK(r.max_full_bytes == 640L * 1024L);
+	}
 	CHECK(pal[0] == 0 && pal[1] == 0 && pal[2] == 0);
 	CHECK(pal[3] == 0x33 && pal[4] == 0 && pal[5] == 0);
 	CHECK(pal[3 * 108] == 0x11 && pal[3 * 108 + 1] == 0x11 && pal[3 * 108 + 2] == 0x11);

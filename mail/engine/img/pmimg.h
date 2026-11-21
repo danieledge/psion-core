@@ -160,6 +160,15 @@ unsigned int  pmimg_in_le16(PmImgIn *in);
 /* the limits, filled in from opts (0 = the defaults) */
 void pmimg_opts_fill(PmImgOpts *o, const PmImgOpts *from);
 
+/* (21 November 2026, MEM-40/MEM-70) the decode's whole-picture buffer
+   (interlaced PNG/GIF, the progressive JPEG's coefficients) fitted to the
+   memory free now (free_bytes, the kernel's free RAM; <= 0: unknown, no
+   change): at most half of what is free above 1.5 MB (the "sleep" level,
+   KPsiMemLow), and never under 64 KB, so one picture cannot take the
+   Psion to its last bytes. A tighter max_full_bytes already set is kept.
+   The decoders then shrink harder, or refuse with "too big". */
+void pmimg_opts_room(PmImgOpts *o, long free_bytes);
+
 int pmimg_decode_jpeg(PmImgIn *in, const PmImgOpts *opts, PmImage *out, char *err, int errmax);
 /* progressive (and extended sequential) JPEGs: pmjprog.c, from the start of the file */
 int pmimg_decode_jpeg_prog(PmImgIn *in, const PmImgOpts *opts, PmImage *out, char *err, int errmax);

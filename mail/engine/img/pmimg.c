@@ -31,6 +31,16 @@ void pmimg_opts_fill(PmImgOpts *o, const PmImgOpts *from)
 	if (o->max_full_bytes <= 0) o->max_full_bytes = 640L * 1024L;
 }
 
+void pmimg_opts_room(PmImgOpts *o, long free_bytes)
+{
+	long room;
+	if (free_bytes <= 0) return;
+	if (o->max_full_bytes <= 0) o->max_full_bytes = 640L * 1024L;
+	room = (free_bytes - 1536L * 1024L) / 2;
+	if (room < 64L * 1024L) room = 64L * 1024L;
+	if (room < o->max_full_bytes) o->max_full_bytes = room;
+}
+
 void pmimg_err(char *err, int errmax, const char *text)
 {
 	int i = 0;
