@@ -8,6 +8,8 @@ their ids. As mail/tools/mkicons.py and web/tools/mkicons.py.
 Each picture is 24x20 ASCII art: k black, d dark grey, l light grey,
 w white, . transparent. Every picture gets a 1-bit mask right after it in
 the MBM (black = drawn), so ids go picture, mask, picture, mask...
+(1.20) Then the same pictures again in colour (colour_picture, ACCENT),
+from EMbmColour on, for a colour screen.
 """
 import sys, os
 from PIL import Image
@@ -396,28 +398,29 @@ kkkkkkkwwkkkkkkk
 ........................
 ........................
 """),
-# (1.02) Terminal: the terminal behind the Start view, a window with a prompt
+# (1.02) Terminal: the terminal behind the Start view, a window with a prompt.
+# (1.20) 18 wide, so that "Terminal" fits beside it on one line
 ('ToolTerm', """
-........................
-.kkkkkkkkkkkkkkkkkkkkkk.
-.kddddddddddddddddddddk.
-.kkkkkkkkkkkkkkkkkkkkkk.
-.kwwwwwwwwwwwwwwwwwwwwk.
-.kwkwwwwwwwwwwwwwwwwwwk.
-.kwwkwwwwwwwwwwwwwwwwwk.
-.kwwwkwwwwwwwwwwwwwwwwk.
-.kwwkwwwwwwwwwwwwwwwwwk.
-.kwkwwwkkkkkwwwwwwwwwwk.
-.kwwwwwwwwwwwwwwwwwwwwk.
-.kwwwwwwwwwwwwwwwwwwwwk.
-.kwwwwwwwwwwwwwwwwwwwwk.
-.kkkkkkkkkkkkkkkkkkkkkk.
-........................
-........................
-........................
-........................
-........................
-........................
+..................
+.kkkkkkkkkkkkkkkk.
+.kddddddddddddddk.
+.kkkkkkkkkkkkkkkk.
+.kwwwwwwwwwwwwwwk.
+.kwkwwwwwwwwwwwwk.
+.kwwkwwwwwwwwwwwk.
+.kwwwkwwwwwwwwwwk.
+.kwwkwwwwwwwwwwwk.
+.kwkwwwkkkkkwwwwk.
+.kwwwwwwwwwwwwwwk.
+.kwwwwwwwwwwwwwwk.
+.kwwwwwwwwwwwwwwk.
+.kkkkkkkkkkkkkkkk.
+..................
+..................
+..................
+..................
+..................
+..................
 """),
 # (1.02) the editor's Save: a floppy disk
 ('ToolSave', """
@@ -512,6 +515,54 @@ kkkkkkwk...kkkkkkkk.....
 ........................
 ........................
 """),
+# (1.20) Servers: the Start view's list of servers (the terminal's Servers
+# button), three server units one above the other
+('ToolServers', """
+........................
+..kkkkkkkkkkkkkkkkkkkk..
+..kwwwwwwwwwwwwwwwwwwk..
+..kwkkkkkkkkwwwwwwddwk..
+..kwwwwwwwwwwwwwwwwwwk..
+..kkkkkkkkkkkkkkkkkkkk..
+........................
+..kkkkkkkkkkkkkkkkkkkk..
+..kwwwwwwwwwwwwwwwwwwk..
+..kwkkkkkkkkwwwwwwddwk..
+..kwwwwwwwwwwwwwwwwwwk..
+..kkkkkkkkkkkkkkkkkkkk..
+........................
+..kkkkkkkkkkkkkkkkkkkk..
+..kwwwwwwwwwwwwwwwwwwk..
+..kwkkkkkkkkwwwwwwddwk..
+..kwwwwwwwwwwwwwwwwwwk..
+..kkkkkkkkkkkkkkkkkkkk..
+........................
+........................
+"""),
+# (1.20) Edit file (on the server): a page with its corner turned, and a
+# pencil across its edge (as Edit server's)
+('ToolEditFile', """
+........................
+.kkkkkkkkkkk............
+.kwwwwwwwwwkk...........
+.kwwwwwwwwwkwk..........
+.kwkkkkkkwwkkkk.........
+.kwwwwwwwwwwwwk.........
+.kwkkkkkkkkkwwk.....kk..
+.kwwwwwwwwwwwwk....kwwk.
+.kwkkkkkkkkkwwk...kwwk..
+.kwwwwwwwwwwwwk..kwwk...
+.kwkkkkkkkwwwwk.kwwk....
+.kwwwwwwwwwwwwkkwwk.....
+.kwkkkkkkkkwwwkwwk......
+.kwwwwwwwwwwwkkkk.......
+.kwwwwwwwwwwwkk.........
+.kwwwwwwwwwwwwk.........
+.kkkkkkkkkkkkkk.........
+........................
+........................
+........................
+"""),
 ]
 
 
@@ -522,6 +573,90 @@ def parse(art):
     return rows, w, len(rows)
 
 
+# (1.20) The colour set (the Coda sheet 2.3), made from the same art for a
+# colour screen (the Series 7, the netBook): a 1-pixel outline in 333333,
+# flat fills, a darker edge at the bottom right of each fill, and a 2-pixel
+# drop shadow in 999999 at the bottom right, as Psion's own pictures. Colours
+# from the Coda set only (the 6x6x6 cube); at most three hues in a picture.
+# The 5mx keeps the grey pictures, byte for byte.
+#   ACCENT[name] = (the colour of 'd', [(seed x, y, colour)...]): each seed
+#   fills its region of white ('w', 4-connected) with that colour.
+SHADES = {   # a fill: itself, its darker edge
+    'white': ('ffffff', 'cccccc'), 'blue': ('0066cc', '003399'), 'navy': ('003366', '000033'),
+    'teal': ('009999', '006666'), 'orange': ('ff6600', 'cc3300'), 'paleorange': ('ffcc99', 'cc9966'),
+    'paleblue': ('ccccff', '9999cc'), 'grey': ('999999', '666666'),
+}
+ACCENT = {
+    'ToolSsh': ('blue', []),
+    'ToolDisconnect': ('blue', [(10, 8, 'paleblue')]),
+    'ToolSnippets': ('blue', []),
+    'ToolKeys': ('blue', []),
+    'ToolFiles': ('blue', [(3, 12, 'paleorange'), (2, 6, 'paleorange')]),
+    'ToolUp': ('blue', [(5, 14, 'paleorange'), (2, 9, 'paleorange')]),
+    'ToolFav': ('blue', [(5, 8, 'orange')]),
+    'ToolGet': ('blue', [(11, 3, 'blue')]),
+    'ToolSendHere': ('blue', [(11, 8, 'blue')]),
+    'ToolClose': ('navy', [(5, 10, 'blue')]),
+    'ToolNew': ('blue', [(20, 12, 'teal')]),
+    'ToolPin': ('orange', [(11, 3, 'orange')]),
+    'ToolTerm': ('navy', []),
+    'ToolSave': ('navy', []),
+    'ToolFind': ('blue', [(6, 3, 'paleblue')]),
+    'ToolGoto': ('blue', [(3, 8, 'blue')]),
+    'ToolEditSrv': ('blue', [(20, 7, 'orange')]),
+    'ToolServers': ('teal', []),
+    'ToolEditFile': ('blue', [(20, 7, 'orange')]),
+}
+OUTLINE, SHADOW = '333333', '999999'
+
+
+def rgb(h):
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def colour_picture(name, rows, w, h):
+    """the colour picture and its mask"""
+    dark, seeds = ACCENT.get(name, ('blue', []))
+    fill = {}                               # (x, y) -> shade name, for every 'w' and 'd'
+    for y, r in enumerate(rows):
+        for x, c in enumerate(r):
+            if c == 'w': fill[(x, y)] = 'white'
+            elif c == 'd': fill[(x, y)] = dark
+            elif c == 'l': fill[(x, y)] = 'grey'
+    for sx, sy, shade in seeds:
+        if rows[sy][sx] != 'w':
+            raise SystemExit(f'{name}: seed {sx},{sy} is not white')
+        todo, seen = [(sx, sy)], set()
+        while todo:
+            x, y = todo.pop()
+            if (x, y) in seen or not (0 <= x < w and 0 <= y < h) or rows[y][x] != 'w':
+                continue
+            seen.add((x, y))
+            fill[(x, y)] = shade
+            todo += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    drawn = {(x, y) for y, r in enumerate(rows) for x, c in enumerate(r) if c != '.'}
+    img = Image.new('RGB', (w, h), (255, 255, 255))
+    mask = Image.new('1', (w, h), 1)
+    for (x, y) in drawn:
+        c = rows[y][x]
+        if c == 'k':
+            col = OUTLINE
+        else:
+            base, edge = SHADES[fill[(x, y)]]
+            # the darker edge: a fill pixel with the outline below it or to its right
+            below = rows[y + 1][x] if y + 1 < h else '.'
+            right = rows[y][x + 1] if x + 1 < w else '.'
+            col = edge if 'k' in (below, right) else base
+        img.putpixel((x, y), rgb(col))
+        mask.putpixel((x, y), 0)
+    for y in range(h):                      # the shadow, 2 pixels down and right
+        for x in range(w):
+            if (x, y) not in drawn and ((x - 2, y - 2) in drawn or (x - 1, y - 1) in drawn):
+                img.putpixel((x, y), rgb(SHADOW))
+                mask.putpixel((x, y), 0)
+    return img, mask
+
+
 def main():
     out, header = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -529,7 +664,7 @@ def main():
     ids = []
     for name, art in ICONS:
         rows, w, h = parse(art)
-        want = (16, 14) if name.startswith('Sm') else (12, 20) if name == 'ToolFav' else (24, 20)
+        want = (16, 14) if name.startswith('Sm') else (12, 20) if name == 'ToolFav' else (18, 20) if name == 'ToolTerm' else (24, 20)
         if (w, h) != want:
             raise SystemExit(f'{name}: {w}x{h}, expected {want[0]}x{want[1]}')
         img = Image.new('L', (w, h), 255)
@@ -547,15 +682,28 @@ def main():
         mask.convert('RGB').save(fm)
         files += [fi, fm]
         ids.append(name)
+    # (1.20) the colour set: each picture again, in the same order, from
+    # EMbmColour on (EMbmColour + EMbmXxx is Xxx's colour picture)
+    opts = ['/2', '/1'] * len(ids)
+    for name, art in ICONS:
+        rows, w, h = parse(art)
+        img, mask = colour_picture(name, rows, w, h)
+        fi = os.path.join(out, f'{name}_c.bmp')
+        fm = os.path.join(out, f'{name}_cm.bmp')
+        img.save(fi)
+        mask.convert('RGB').save(fm)
+        files += [fi, fm]
+        opts += ['/c8', '/1']
     with open(header, 'w') as f:
         f.write('/* pticons.h - made by tools/mkicons.py: PsiTerm.mbm ids */\n')
         f.write('#ifndef PTICONS_H\n#define PTICONS_H\nenum TPtIconId\n\t{\n')
         for i, n in enumerate(ids):
             f.write(f'\tEMbm{n} = {2 * i}, EMbm{n}Mask = {2 * i + 1},\n')
-        f.write(f'\tEMbmCount = {2 * len(ids)}\n\t}};\n#endif\n')
+        f.write(f'\tEMbmColour = {2 * len(ids)},   /* + EMbmXxx: the colour picture (1.20) */\n')
+        f.write(f'\tEMbmCount = {4 * len(ids)}\n\t}};\n#endif\n')
     with open(os.path.join(out, 'files.txt'), 'w') as f:
-        for i, p in enumerate(files):
-            f.write(('/2' if i % 2 == 0 else '/1') + os.path.basename(p) + '\n')
+        for o, p in zip(opts, files):
+            f.write(o + os.path.basename(p) + '\n')
 
 
 if __name__ == '__main__':
