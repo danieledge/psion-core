@@ -383,7 +383,7 @@ static int list_calendars(char *why, int whymax)
 	HttpResp r;
 	char home[200];
 	int res, i, def = -1;
-	pm_progress("Looking for calendars...");
+	pm_progress("Looking for calendars\x85");
 	if (!g_home[0]) {
 		res = discover(why, whymax);
 		if (res != CAL_RES_OK) return res;
@@ -598,7 +598,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 		"<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VEVENT\">"
 		"<C:time-range start=\"%s\" end=\"%s\"/></C:comp-filter></C:comp-filter></C:filter>"
 		"</C:calendar-query>", a, b, a, b);
-	pm_progress("Fetching %s...", c->name);
+	pm_progress("Fetching %s\x85", c->name);
 	g_nseries = 0;
 	memset(g_dav, 0, sizeof(*g_dav));
 	g_dav->out = out;
@@ -652,7 +652,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 			"<D:prop><D:getetag/><C:calendar-data/></D:prop>"
 			"<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VTODO\"/></C:comp-filter></C:filter>"
 			"</C:calendar-query>");
-		pm_progress("Fetching %s's to-dos...", c->name);
+		pm_progress("Fetching %s's to-dos\x85", c->name);
 		memset(g_dav, 0, sizeof(*g_dav));
 		g_dav->out = out;
 		g_dav->calid = c->id;
@@ -955,7 +955,7 @@ static int push_changes(int *n, char *why, int whymax)
 	while (fgets(line, sizeof(line), f)) {
 		line[strcspn(line, "\r\n")] = 0;
 		if (line[0] == '#' || !line[0]) continue;
-		pm_progress("Sending calendar changes (%d of %d)...", done + 1, total);
+		pm_progress("Sending calendar changes (%d of %d)\x85", done + 1, total);
 		rc = push_one(line, res, why, whymax);
 		if (rc != CAL_RES_OK) break;
 		done++;
