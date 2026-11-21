@@ -41,6 +41,9 @@ extern void tlsv_start(void);
 extern const char *tlsv_certificate(const unsigned char *msg, int len);
 extern const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char th[32]);
 extern int tlsv_ok(void);
+#ifndef TLS_SIG_PINNED
+extern void tlsv_end(void);   /* (certcheck.c) the chain given back */
+#endif
 #endif
 
 /* psiglue */
@@ -156,19 +159,26 @@ void tls_forget(void)
 
 /* The connection's buffers are work memory (psiwork.h): taken by
    tls_connect, given back by tls_close. They were statics, 66 KB (71 KB with
-   the tickets) of each program's RAM whether it was connected or not. */
+   the tickets) of each program's RAM whether it was connected or not.
+   (21 November 2026, MEM-33) 21 KB while connected, not 66 KB: the
+   application data is read from the record itself (it was copied into a
+   second 16 KB buffer), a record sent is at most OUT_MAX bytes of data
+   (tls_write never sent more than 4 KB a record: out[] was sized for 16 KB),
+   and the handshake's 16 KB is a block of its own, given back when the
+   handshake ends. */
 #include "psiwork.h"
+#define OUT_MAX 4096
 typedef struct {
 	unsigned char rec[REC_MAX];              /* one record being read */
-	unsigned char app[16384 + 256];          /* decrypted application data */
-	unsigned char out[5 + 16384 + 1 + 16];   /* one record being sent */
-	unsigned char hs[HS_MAX];                /* handshake bytes not yet parsed */
+	unsigned char out[5 + OUT_MAX + 1 + 16]; /* one record being sent */
 } tls_work;
 static tls_work *g_w;
+static unsigned char *g_hsb;                 /* HS_MAX: handshake bytes not yet parsed (tls_connect only) */
 #define g_rec (g_w->rec)
-#define g_app (g_w->app)
 #define g_out (g_w->out)
-#define g_hs  (g_w->hs)
+#define g_hs  g_hsb
+/* the application data not yet read: g_rec[g_app_pos..g_app_len) (a record
+   is read again only once these are all taken) */
 static int g_app_pos, g_app_len;
 static int g_closed;
 /* how the connection's reading ended (tls_end): 2 the server's close_notify,
@@ -506,7 +516,7 @@ static int read_record(int *len, int timeout_ms)
 static int write_record(int type, const unsigned char *data, int len)
 {
 	unsigned char *out;
-	if (!g_w || len > 16384) return -1;     /* (no connection: after tls_close) */
+	if (!g_w || len > OUT_MAX) return -1;   /* (no connection: after tls_close) */
 	out = g_out;
 	if (!g_encrypted) {
 		out[0] = (unsigned char)type; out[1] = 3; out[2] = (type == 22) ? 1 : 3;
@@ -537,6 +547,13 @@ void tls_close(void)
 	memset(g_s_ap, 0, sizeof(g_s_ap));
 	memset(g_c_ap, 0, sizeof(g_c_ap));
 	if (g_w) { psi_work_free(g_w); g_w = 0; }   /* (wiped as it goes) */
+	if (g_hsb) { psi_work_free(g_hsb); g_hsb = 0; }
+#if defined(TLS_VERIFY) && !defined(TLS_SIG_PINNED)
+	/* (21 November 2026, MEM-34) the certificate chain (16 KB) goes too: a
+	   refused certificate or a line dropped mid-handshake left it held until
+	   the next connection */
+	tlsv_end();
+#endif
 	g_encrypted = 0;
 	g_app_pos = g_app_len = 0;
 	g_closed = 1;
@@ -574,7 +591,9 @@ int tls_connect(const char *host, char *why, int whymax)
 
 	tls_close();                         /* nothing of the last connection survives */
 	g_w = (tls_work *)psi_work_alloc(sizeof(tls_work));
-	if (!g_w) {
+	g_hsb = g_w ? (unsigned char *)psi_work_alloc(HS_MAX) : 0;
+	if (!g_w || !g_hsb) {
+		tls_close();
 		g_err = "Not enough memory";
 		g_closed = 1;
 		if (why && whymax > 0) { strncpy(why, g_err, whymax - 1); why[whymax - 1] = 0; }
@@ -894,7 +913,8 @@ done:
 #endif
 	memset(&transcript, 0, sizeof(transcript));
 	memset(&tmp, 0, sizeof(tmp));
-	if (g_w) memset(g_hs, 0, sizeof(g_hs));
+	/* the handshake's block goes back (wiped as it goes) */
+	if (g_hsb) { psi_work_free(g_hsb); g_hsb = 0; }
 	memset(ch, 0, sizeof(ch));
 	return ret;
 }
@@ -903,7 +923,7 @@ int tls_write(const void *buf, int len)
 {
 	const unsigned char *p = (const unsigned char *)buf;
 	while (len > 0) {
-		int k = len > 4096 ? 4096 : len;
+		int k = len > OUT_MAX ? OUT_MAX : len;
 		if (write_record(23, p, k) != 0) return -1;
 		p += k; len -= k;
 	}
@@ -1013,8 +1033,7 @@ int tls_read(void *buf, int max, int timeout_ms)
 			return type;
 		}
 		if (type == 23) {
-			memcpy(g_app, g_rec, len);
-			g_app_pos = 0;
+			g_app_pos = 0;                         /* (read from g_rec itself) */
 			g_app_len = len;
 		} else if (type == 21) {                  /* alert: close_notify or error */
 			g_closed = 1;
@@ -1030,7 +1049,7 @@ int tls_read(void *buf, int max, int timeout_ms)
 	{
 		int k = g_app_len - g_app_pos;
 		if (k > max) k = max;
-		memcpy(buf, g_app + g_app_pos, k);
+		memcpy(buf, g_rec + g_app_pos, k);
 		g_app_pos += k;
 		return k;
 	}

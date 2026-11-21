@@ -53,6 +53,12 @@ def run(cipher):
     say('three'); check(cipher + ': a KeyUpdate asking for ours: our answer read by the server', wait_for('got:three'))
     say('k'); time.sleep(0.3); say('K'); time.sleep(0.3)
     say('four'); check(cipher + ': two more: still both ways', wait_for('got:four'))
+    # (MEM-33) application data read from the record itself: a line of
+    # 15,000 bytes (one record of the server's) read whole; and one of
+    # 10,000 sent as three records of at most 4 KB
+    say('L' + 'x' * 14999); check(cipher + ': a 15,000-byte line read whole', wait_for('len:15000'))
+    say('W'); check(cipher + ': a 10,000-byte line sent', wait_for('w' * 10000))
+    say('five'); check(cipher + ': and on as before', wait_for('got:five'))
     say('bye')
     try: out = cli.communicate(timeout=10)[0]
     except subprocess.TimeoutExpired: cli.kill(); out = cli.communicate()[0]

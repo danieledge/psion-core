@@ -94,6 +94,16 @@ void tlsv_start(void)
 
 int tlsv_ok(void) { return g_proved && g_trusted; }
 
+/* (21 November 2026, MEM-34) called by tls_close: the chain's 16 KB given
+   back whichever way the connection ended (a refused certificate, a line
+   dropped between Certificate and CertificateVerify). What a refusal says
+   (tlsv_problem, tlsv_fingerprint) stays for the caller to show. */
+void tlsv_end(void)
+{
+	chain_free();
+	g_ncert = 0;
+}
+
 /* ------------------------------------------------------------------ DER */
 
 /* reads one TLV at *p; returns its tag, or -1 */

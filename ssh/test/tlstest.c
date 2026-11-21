@@ -63,7 +63,7 @@ int main(int argc, char **argv)
 {
 	struct sockaddr_in a;
 	char why[120], line[256];
-	int k = 0;
+	int k = 0, all = 0;
 	if (argc != 2) { fprintf(stderr, "tlstest PORT\n"); return 2; }
 	g_fd = socket(AF_INET, SOCK_STREAM, 0);
 	memset(&a, 0, sizeof(a));
@@ -80,9 +80,25 @@ int main(int argc, char **argv)
 		char c;
 		int n = tls_read(&c, 1, 20000);
 		if (n <= 0) { printf("read %d: %s\n", n, tls_error()); fflush(stdout); return 1; }
-		if (c != '\n') { if (k < (int)sizeof(line) - 1) line[k++] = c; continue; }
+		if (c != '\n') { all++; if (k < (int)sizeof(line) - 1) line[k++] = c; continue; }
 		line[k] = 0;
 		k = 0;
+		/* (MEM-33) a long line: read from the records themselves, its length
+		   said back; "W": a 10,000-byte line sent, in records of 4 KB */
+		if (line[0] == 'L') {
+			char out[40];
+			int m = snprintf(out, sizeof(out), "len:%d\n", all);
+			all = 0;
+			if (tls_write(out, m) != 0) { printf("write failed\n"); return 1; }
+			continue;
+		}
+		all = 0;
+		if (!strcmp(line, "W")) {
+			static char big[10001];
+			memset(big, 'w', 10000); big[10000] = '\n';
+			if (tls_write(big, 10001) != 0) { printf("write failed\n"); return 1; }
+			continue;
+		}
 		printf("line: %s\n", line);
 		fflush(stdout);
 		if (!strcmp(line, "bye")) break;
