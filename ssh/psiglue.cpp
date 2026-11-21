@@ -3439,6 +3439,57 @@ extern "C" void pg_work_trim(void)
 	User::Heap().Compress();
 	}
 
+// (21 November 2026, P2-05) the chunks under psialloc.c (a program that
+// builds with PSI_ALLOC=1): a block of its own that sets aside aMax of
+// address room and commits aCommit; Adjust grows or shrinks it in place.
+// Separate from the work memory's twelve; not wiped (a heap cell is not).
+const TInt KPgChunkMax = 24;
+static TInt gPgChunk[KPgChunkMax];
+static TUint8* gPgChunkBase[KPgChunkMax];
+
+extern "C" void* pg_chunk_new(unsigned long aCommit, unsigned long aMax)
+	{
+	if (aMax == 0 || aMax > 0x1000000 || aCommit > aMax)
+		return 0;
+	for (TInt i = 0; i < KPgChunkMax; i++)
+		if (!gPgChunkBase[i])
+			{
+			RChunk c;
+			if (c.CreateLocal((TInt)aCommit, (TInt)aMax) != KErrNone)
+				return 0;
+			gPgChunk[i] = c.Handle();
+			gPgChunkBase[i] = c.Base();
+			return gPgChunkBase[i];
+			}
+	return 0;
+	}
+
+extern "C" int pg_chunk_adjust(void* aBase, unsigned long aBytes)
+	{
+	for (TInt i = 0; i < KPgChunkMax; i++)
+		if (aBase && gPgChunkBase[i] == (TUint8*)aBase)
+			{
+			RChunk c;
+			c.SetHandle(gPgChunk[i]);
+			return c.Adjust((TInt)aBytes) == KErrNone ? 0 : -1;
+			}
+	return -1;
+	}
+
+extern "C" void pg_chunk_close(void* aBase)
+	{
+	for (TInt i = 0; i < KPgChunkMax; i++)
+		if (aBase && gPgChunkBase[i] == (TUint8*)aBase)
+			{
+			RChunk c;
+			c.SetHandle(gPgChunk[i]);
+			c.Close();
+			gPgChunk[i] = 0;
+			gPgChunkBase[i] = 0;
+			return;
+			}
+	}
+
 // (21 November 2026) how short of memory the Psion is, for an engine with
 // no window (psimemlvl.h: 0 normal, 1 tidy, 2 low, 3 critical): the
 // watcher's level in the global chunk PsiMemLevel, -1 when no watcher has

@@ -2,7 +2,7 @@
 #   make -f test/Makefile.host test      build and run them all
 # Each one is a PC program; nothing here needs the EPOC SDK.
 
-all: linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest tlstest
+all: linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest tlstest psialloctest
 
 # Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
 linktest: test/linktest.cpp psiglue.cpp pglinktest.h
@@ -45,6 +45,10 @@ tlstest: $(TLS_SRCS) tls13.h test/tlshost/includes.h test/tlshost/options.h
 	gcc -O1 -g -w -std=gnu99 -fsanitize=address,undefined -I test/tlshost -I . -I db/src -I db/libtomcrypt/src/headers \
 		-DLTC_SOURCE -DLTC_NO_ASM $(TLS_SRCS) -o $@
 
+# (P2-05, P2-06) psialloc.c and psivec.h: big blocks in chunks of their own
+psialloctest: test/psialloctest.c psialloc.c psialloc.h psivec.h psiwork.h
+	gcc -Wall -O1 -g -fsanitize=address,undefined -I . test/psialloctest.c psialloc.c -o $@
+
 test: all
 	./linktest
 	./linkseentest
@@ -53,6 +57,7 @@ test: all
 	./psiholdtest
 	./setuptest
 	./aesgcmtest
+	./psialloctest
 	python3 test/tlstest.py ./tlstest
 
 clean:
