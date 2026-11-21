@@ -7,6 +7,7 @@ ssh/linkseentest
 ssh/psilinktest
 ssh/pgdevboxtest
 ssh/psiholdtest
+ssh/psierrtest
 tools/sbtest/sbtest
 tools/drawtest/fbtest
 tools/shot/host

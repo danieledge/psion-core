@@ -2,7 +2,7 @@
 #   make -f test/Makefile.host test      build and run them all
 # Each one is a PC program; nothing here needs the EPOC SDK.
 
-all: linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest tlstest psialloctest
+all: linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest tlstest psialloctest psierrtest
 
 # Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
 linktest: test/linktest.cpp psiglue.cpp pglinktest.h
@@ -49,6 +49,11 @@ tlstest: $(TLS_SRCS) tls13.h test/tlshost/includes.h test/tlshost/options.h
 psialloctest: test/psialloctest.c psialloc.c psialloc.h psivec.h psiwork.h
 	gcc -Wall -O1 -g -fsanitize=address,undefined -I . test/psialloctest.c psialloc.c -o $@
 
+# An error in words for a message (psierr.h): no tail for an unknown reason,
+# every length cut to the buffer (test/errstub's descriptors panic as ER5's)
+psierrtest: test/psierrtest.cpp psierr.h test/errstub/e32std.h
+	g++ -Wall -Wextra -O1 -g -fsanitize=address,undefined -I test/errstub -I . test/psierrtest.cpp -o $@
+
 test: all
 	./linktest
 	./linkseentest
@@ -58,9 +63,10 @@ test: all
 	./setuptest
 	./aesgcmtest
 	./psialloctest
+	./psierrtest
 	python3 test/tlstest.py ./tlstest
 
 clean:
-	rm -f linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest tlstest
+	rm -f linktest linkseentest psilinktest pgdevboxtest psiholdtest setuptest aesgcmtest tlstest psialloctest psierrtest
 
 .PHONY: all test clean

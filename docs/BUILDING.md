@@ -85,6 +85,7 @@ nothing had to be renamed and `git log` follows every file back:
 | `ssh/psipurge.h` | purgeable caches, off unless a build sets `PSI_PURGE=1`: a cache in a global chunk named `PsiPurge...` that the memory watcher empties with `PsiPurgeAll` when it is not pinned |
 | `ssh/psikeep.h` | settings kept on the card as well as on C: (`D:\System\Data\Kept\`), without passwords or keys, put back on a new C:. Header only (efsrv.lib) |
 | `ssh/psizero.h` | folders made on a card after a file of zeros, so that a computer's disk check reads them right (EPOC does not clear a new folder's cluster): one file for all the folders to make, sized by the card's cluster. Used by `psikeep.h` and Coda's `psimkdir.h`. Header only (efsrv.lib) |
+| `ssh/psierr.h` | an EPOC error as words for a message (`PsiErrWords`, `PsiErrTail`, `PsiErrMsg`: "Not saved - the disk is full", no tail when the reason is not known) and "<What> is on the card - put the card in" (`PsiOnCardMsg`). PsiMail, PsiWeb, PsiLinux, PsiAmp and PsiPDF; Coda's own programs keep the same words in their own copy. Header only (euser.lib). Host test `ssh/test/psierrtest.cpp` |
 | `ssh/pglinktest.cpp`, `.h` | Connection settings > Test, compiled into every program |
 | `ssh/aesgcm.c`, `.h` | AES-128-GCM, TLS 1.3's second cipher (`TLS_AES_GCM`: PsiWeb from 0.86; PsiMail can define it in its `tls/includes.h`) |
 | `ssh/psilink.rh` | The words of the shared connection settings (the route names), for every program's `.rss` |
