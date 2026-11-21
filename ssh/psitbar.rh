@@ -14,9 +14,10 @@
 //   - SHORT: a 240-line screen (the Series 5mx): buttons of 37, as Psion's.
 //   - TALL: a 480-line screen without Coda (the Series 7, Psion's own
 //     netBook image): buttons of 50, as the netBook's own programs.
-//   - CODA: the netBook with Coda: buttons of 50, then the netBook's battery,
-//     Coda's extras block (charge, free memory, brightness: PsiBatt.dll) and
-//     Coda's clock, as every built-in program's toolbar has them
+//   - CODA: the netBook with Coda: buttons of 50, the stretching gap, then
+//     the netBook's battery, Coda's extras block (charge, free memory,
+//     brightness: PsiBatt.dll) and Coda's clock, the block just above the
+//     clock, as every built-in program's toolbar has them
 //     (psion-netbook tools/toolbars.mts). Those three types are made by
 //     Coda's hook in Eikon's control factory; psitbar.h chooses this one only
 //     when the hook is in the ROM.
@@ -68,8 +69,10 @@ STRUCT PSI_TB_BATTERY
 #define PSI_TB_CODA(NAMEID, BUTTONS) \
 	breadth=KEikStdToolBarWidth; \
 	controls= { PSI_TB_NAME(NAMEID), BUTTONS, \
+		TBAR_CTRL { type=EEikCtSpacer; flags=EEikToolBarCtrlHasSetMinLength|EEikToolBarCtrlIsStretchable; length=0; control=SPACER; }, \
 		TBAR_CTRL { type=PSI_TB_TYPE_BATTERY; control=PSI_TB_BATTERY { }; }, \
 		TBAR_CTRL { type=PSI_TB_TYPE_EXTRAS; control=SPACER; }, \
-		PSI_TB_END(PSI_TB_TYPE_CLOCK) };
+		TBAR_CTRL { type=PSI_TB_TYPE_CLOCK; control=CLOCK { digitalresourceid=R_EIK_DIGITAL_CLOCK; analogresourceid=R_EIK_ANALOG_CLOCK; }; }, \
+		TBAR_CTRL { type=EEikCtSpacer; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdGapBelowClock; control=SPACER; } };
 
 #endif
