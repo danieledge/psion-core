@@ -16,6 +16,13 @@
 // log", passed in PsiShared.log_on): pt_log writes nothing, and makes no
 // file, until pt_log_open has been called, and psissh calls it only when
 // log_on is 1. What is in the files already is left as it is.
+//
+// (21 November 2026, MEM-38) At most 64 KB a file, and at the cap the log
+// starts again (the full one becomes PsiTerm.old), so the newest lines are
+// kept: the cap was 400 KB, with logging stopped there for the rest of the
+// run, and the two files could hold 800 KB of C: (RAM). If the file cannot
+// be turned over (another connection's psissh has it open), logging stops
+// at the cap as before.
 
 #include <e32std.h>
 #include <f32file.h>
@@ -31,7 +38,7 @@ static TInt gLogWanted = 0;     // pt_log_open called: the app keeps a log
 static TUint gLogT0 = 0;
 static TInt gLogBytes = 0;
 
-#define PT_LOG_CAP (400 * 1024)   // a runaway session stops logging, not the Psion
+#define PT_LOG_CAP (64 * 1024)    // a file; then PsiTerm.old (a runaway session costs 128 KB at most)
 
 static void LogOpen()
 	{
@@ -67,6 +74,25 @@ static void LogOpen()
 	gLogOpen = 1;
 	}
 
+// the log at its cap: it becomes PsiTerm.old and a new one starts. 1 done,
+// 0 not (the log stays closed to further lines: gLogOpen -1)
+static TInt LogTurn()
+	{
+	gLog.Close();
+	gLogFs.Delete(KLogOld);
+	TInt r = gLogFs.Rename(KLogFile, KLogOld);
+	if (r == KErrNone)
+		r = gLog.Replace(gLogFs, KLogFile, EFileWrite | EFileShareAny);
+	if (r != KErrNone)
+		{
+		gLogOpen = -1;
+		gLogFs.Close();
+		return 0;
+		}
+	gLogBytes = 0;
+	return 1;
+	}
+
 // aAppend: 0 = a new log (the old one becomes PsiTerm.old), 1 = add to it
 // (not called: no log is kept, and pt_log does nothing)
 extern "C" void pt_log_open(int aAppend)
@@ -81,7 +107,9 @@ extern "C" void pt_log(const char* aText)
 		return;
 	if (gLogOpen == 0)
 		LogOpen();
-	if (gLogOpen != 1 || !aText || gLogBytes > PT_LOG_CAP)
+	if (gLogOpen != 1 || !aText)
+		return;
+	if (gLogBytes > PT_LOG_CAP && !LogTurn())
 		return;
 	TUint t = (User::TickCount() - gLogT0) * 10 / 64;       // 1/10 s
 	TBuf8<160> line;

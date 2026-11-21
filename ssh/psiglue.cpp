@@ -785,6 +785,45 @@ static void NifStop(const char* aWhy)
 
 // The OS's own NetDial log is written only if C:\LOGS\Netdial\ exists
 // (comms notes 3.3): made once, so a failing dial-up leaves its own account
+//
+// (21 November 2026, MEM-38) The folder psiglue made is marked
+// (C:\System\Data\PsiNetdial.mk) and, once "Keep a log" is off again, the
+// next SSH connection removes it with the OS's logs in it: it stayed for
+// good, and the OS logged every dial-up of every program into it. While
+// the log is kept the OS's logs are cleared when they pass 64 KB. A folder
+// with no mark (made by hand, or by PsiTerm before 1.21) is only kept
+// under 64 KB, never removed.
+_LIT(KNetdialDir, "C:\\LOGS\\Netdial\\");
+_LIT(KNetdialMark, "C:\\System\\Data\\PsiNetdial.mk");
+const TInt KNetdialCap = 64 * 1024;
+
+// the files in C:\LOGS\Netdial\ removed if they total more than aOver
+// bytes (0: all); the folder too when aDir
+static void NetdialClear(RFs& aFs, TInt aOver, TBool aDir)
+	{
+	CDir* dir = NULL;
+	if (aFs.GetDir(_L("C:\\LOGS\\Netdial\\*"), KEntryAttNormal, ESortNone, dir) == KErrNone && dir)
+		{
+		TInt total = 0, i;
+		for (i = 0; i < dir->Count(); i++)
+			total += (*dir)[i].iSize;
+		if (total > aOver)
+			for (i = 0; i < dir->Count(); i++)
+				{
+				TFileName name(KNetdialDir);
+				name.Append((*dir)[i].iName);
+				aFs.Delete(name);
+				}
+		delete dir;
+		}
+	if (aDir)
+		{
+		aFs.RmDir(KNetdialDir);
+		aFs.RmDir(_L("C:\\LOGS\\"));          // (only if empty)
+		aFs.Delete(KNetdialMark);
+		}
+	}
+
 static void EnsureNetdialLog()
 	{
 	// Opt-in (L1): only while the app asks for the link's detail (gDialVerbose,
@@ -793,13 +832,30 @@ static void EnsureNetdialLog()
 	// the OS's own account from PsiMail or PsiWeb, make C:\LOGS\Netdial\ by hand.
 	// And only when the person keeps a log (PsiShared.log_on, "Keep a log").
 	static int done = 0;
-	if (done || !gDialVerbose || !gShared || !gShared->log_on)
+	if (done || !gDialVerbose || !gShared)
 		return;
 	done = 1;
 	RFs fs;
 	if (fs.Connect() != KErrNone)
 		return;
-	TInt r = fs.MkDirAll(_L("C:\\LOGS\\Netdial\\"));
+	TEntry e;
+	TBool marked = fs.Entry(KNetdialMark, e) == KErrNone;
+	if (!gShared->log_on)
+		{
+		if (marked)
+			NetdialClear(fs, 0, ETrue);      // the log is off: what psiglue made goes
+		fs.Close();
+		return;
+		}
+	TInt r = fs.MkDirAll(KNetdialDir);
+	if (r == KErrNone)
+		{
+		RFile f;                             // (made here: marked, to go when the log is off)
+		if (f.Replace(fs, KNetdialMark, EFileWrite) == KErrNone)
+			f.Close();
+		}
+	else if (r == KErrAlreadyExists)
+		NetdialClear(fs, KNetdialCap, EFalse);   // (marked or not: kept under 64 KB)
 	fs.Close();
 	if (r != KErrNone && r != KErrAlreadyExists)
 		LinkLogErr("could not make C:\\LOGS\\Netdial", r);
