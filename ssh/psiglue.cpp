@@ -146,8 +146,18 @@ const TInt KProgressPollUs    = 1000000;  // WaitLink asks NIFMAN for its stage 
 
 // The socket shutdown's request status lives here for the same reason as
 // gLookupStat (see above): a Shutdown() cannot be cancelled.
-static TRequestStatus gShutStat;
-static int gShutOrphan = 0;
+// (21 November 2026, MEM-37) Four of them, each with the socket it is for:
+// a shutdown that does not complete in 3 s leaves its socket here, and the
+// socket is closed and deleted once the shutdown has completed (it was never
+// closed; and while one was out every later socket was left without a
+// shutdown at all, each open in ESOCK until the session closed, which with
+// "Stay connected" is never). gShutDead: the session that socket belonged
+// to has closed (its handle went with it: deleted, never Closed).
+const TInt KPgShutMax = 4;
+static TRequestStatus gShutStat[KPgShutMax];
+static RSocket* gShutSock[KPgShutMax];
+static int gShutOrphan[KPgShutMax];        // its shutdown not yet completed
+static int gShutDead[KPgShutMax];
 
 // (0.68) modem route: carrier detect. After CONNECT, if the modem drives
 // DCD (it is high), the port is set to fail reads and writes at once
@@ -370,10 +380,29 @@ static void NoteOrphans()
 		gConnOrphan = 0;
 		LinkLog("the abandoned connect has completed");
 		}
-	if (gShutOrphan && gShutStat != KRequestPending)
+	for (TInt i = 0; i < KPgShutMax; i++)
+		if (gShutOrphan[i] && gShutStat[i] != KRequestPending)
+			{
+			gShutOrphan[i] = 0;
+			LinkLog("the abandoned shutdown has completed");
+			}
+	}
+
+// The abandoned sockets whose shutdown has completed: closed and deleted.
+// Not from inside a wait (NoteOrphans only notes): Close is a call to ESOCK.
+static void CloseShutSocks()
+	{
+	for (TInt i = 0; i < KPgShutMax; i++)
 		{
-		gShutOrphan = 0;
-		LinkLog("the abandoned shutdown has completed");
+		if (gShutSock[i] && (!gShutOrphan[i] || gShutDead[i]))
+			{
+			if (!gShutDead[i])
+				gShutSock[i]->Close();
+			delete gShutSock[i];
+			gShutSock[i] = 0;
+			}
+		if (!gShutSock[i] && !gShutOrphan[i])
+			gShutDead[i] = 0;
 		}
 	}
 
@@ -467,8 +496,10 @@ static void ReapOrphans(TInt aWaitUs)
 		gLookupOrphan = 0;
 	if (gConnOrphan && WaitFor(gConnStat, aWaitUs, 0))
 		gConnOrphan = 0;
-	if (gShutOrphan && WaitFor(gShutStat, aWaitUs, 0))
-		gShutOrphan = 0;
+	for (TInt i = 0; i < KPgShutMax; i++)
+		if (gShutOrphan[i] && WaitFor(gShutStat[i], aWaitUs, 0))
+			gShutOrphan[i] = 0;
+	CloseShutSocks();
 	}
 
 // ----- the log --------------------------------------------------------------
@@ -965,29 +996,40 @@ static void NetCloseSocket(int aAbort)
 		gRecvPending = 0;
 		}
 	gSockOpen = 0;
-	if (gShutOrphan)
+	CloseShutSocks();                       // (earlier ones done meanwhile: their slots free)
+	TInt k = 0;
+	while (k < KPgShutMax && (gShutSock[k] || gShutOrphan[k]))
+		k++;
+	if (k == KPgShutMax)
 		{
-		// the previous socket's shutdown is still out: this one gets no
-		// second static status - close it abortively via the session later
-		LinkLog("socket: an earlier shutdown is still pending: leaving this socket to the session");
+		// four shutdowns still out: this one gets no static status - close
+		// it abortively via the session later
+		LinkLog("socket: earlier shutdowns are still pending: leaving this socket to the session");
 		RSocket* fresh = new RSocket;
 		if (fresh) gSock = fresh;
 		return;
 		}
-	gShutStat = KRequestPending;
-	gSock->Shutdown(aAbort ? RSocket::EImmediate : RSocket::ENormal, gShutStat);
-	if (WaitFor(gShutStat, KShutdownWaitUs, 0))
+	TRequestStatus& st = gShutStat[k];
+	st = KRequestPending;
+	gSock->Shutdown(aAbort ? RSocket::EImmediate : RSocket::ENormal, st);
+	if (WaitFor(st, KShutdownWaitUs, 0))
 		{
-		if (gShutStat.Int() != KErrNone && gShutStat.Int() != KErrDisconnected && gShutStat.Int() != KErrEof)
-			LinkLogErr(aAbort ? "socket: shutdown (immediate) completed" : "socket: shutdown completed", gShutStat.Int());
+		if (st.Int() != KErrNone && st.Int() != KErrDisconnected && st.Int() != KErrEof)
+			LinkLogErr(aAbort ? "socket: shutdown (immediate) completed" : "socket: shutdown completed", st.Int());
 		gSock->Close();
 		return;
 		}
-	LinkLog(aAbort ? "socket: the immediate shutdown did not complete in 3 s: leaving the socket to the session"
-	               : "socket: the shutdown did not complete in 3 s (link down?): leaving the socket to the session");
-	gShutOrphan = 1;
+	LinkLog(aAbort ? "socket: the immediate shutdown did not complete in 3 s: the socket is closed when it does"
+	               : "socket: the shutdown did not complete in 3 s (link down?): the socket is closed when it does");
 	RSocket* fresh = new RSocket;           // the old object stays with its request
-	if (fresh) gSock = fresh;
+	if (!fresh)
+		{
+		gShutOrphan[k] = 1;                 // (no new one: kept as it was, for the session)
+		return;
+		}
+	gShutOrphan[k] = 1;
+	gShutSock[k] = gSock;
+	gSock = fresh;
 	}
 
 // Closes everything ESOCK: the socket, a resolver still open and the session
@@ -1008,6 +1050,9 @@ static void NetClose()
 		{
 		gSs->Close();               // EPOC hangs the dial-up up after its idle time
 		gSsOpen = 0;
+		for (TInt i = 0; i < KPgShutMax; i++)
+			if (gShutSock[i])
+				gShutDead[i] = 1;       // (their handles went with the session)
 		}
 	ReapOrphans(2000000);
 	gLinkSuspect = 0;
