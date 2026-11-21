@@ -1,0 +1,17 @@
+// psiabout.hrh - the ids of the shared About box (psiabout.h, psiabout.rssi),
+// the same in every program that carries it. 0x7d00 to 0x7dff is this
+// file's: no program uses it for anything else.
+#ifndef PSIABOUT_HRH
+#define PSIABOUT_HRH
+
+enum TPsiAboutControls
+	{
+	EPsiAbDlgName = 0x7d00,  // "PsiTerm 1.20"
+	EPsiAbDlgWhat,           // what it is, and the machines
+	EPsiAbDlgCopy,           // the (c) line
+	EPsiAbDlgCoffee,         // Buy me a coffee
+	EPsiAbDlgCredits,        // Credits: the other people's code
+	EPsiAbBidCredits = 0x7d40   // the Credits... button
+	};
+
+#endif

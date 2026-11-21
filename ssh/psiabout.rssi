@@ -1,0 +1,52 @@
+// psiabout.rssi - the About box every bundled program shows (PsiTerm,
+// PsiMail, PsiWeb; the Coda sheet 2.7 and 2.13), and its Credits. A program
+// includes this in its .rss after its EIK_APP_INFO and shows it with
+// PsiAboutL (psiabout.h), which fills in every line:
+//
+//   About PsiTerm
+//   PsiTerm 1.20                                            (bold)
+//   SSH terminal for the Psion Series 5mx, Series 7 & netBook
+//   (c) Dan Edge 2026 - part of Coda for the Psion netBook  (Coda's netBook)
+//   Buy me a coffee: buymeacoffee.com/danedge               (small)
+//                                       [Credits...]  [Continue]
+//
+// The first three lines' texts are set at run time (no stale name or version
+// here), and the dialog's width is fixed (psiabout.h), so the box is the
+// same size in every program.
+#include "psiabout.hrh"
+
+RESOURCE DIALOG r_psi_about_dialog
+	{
+	title="About";
+	flags=EEikDialogFlagWait;
+	buttons=r_psi_about_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPsiAbDlgName; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPsiAbDlgWhat; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPsiAbDlgCopy; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPsiAbDlgCoffee; control=LABEL { standard_font=EEikLabelFontAnnotation; horiz_align=EEikLabelAlignHLeft; txt="Buy me a coffee: buymeacoffee.com/danedge"; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_psi_about_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPsiAbBidCredits; button=CMBUT { txt="Credits"<0x85>; }; hotkey='C'; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Continue"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// Credits: other people's code in the program, one line each (the text is
+// the program's own: PsiAboutL)
+RESOURCE DIALOG r_psi_credits_dialog
+	{
+	title="Credits";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPsiAbDlgCredits; control=LABEL { standard_font=EEikLabelFontAnnotation; horiz_align=EEikLabelAlignHLeft; txt="-"; }; }
+		};
+	}
