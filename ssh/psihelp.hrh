@@ -1,0 +1,12 @@
+// psihelp.hrh - the Help dialog's text control (psihelp.h): its custom
+// control type, for the program's .rss and .cpp. 0x7e00 to 0x7eff is this
+// file's: no program uses it for anything else.
+#ifndef PSIHELP_HRH
+#define PSIHELP_HRH
+
+enum TPsiHelpControls
+	{
+	EPsiCtHelpText = 0x7e00
+	};
+
+#endif
