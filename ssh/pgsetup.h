@@ -211,14 +211,14 @@ static inline const char* pg_su_helper_note(const PgSuChoice* aC, int aTall)
 		return "The modem makes pages lighter - it sees your pages";
 	default:
 		return aC->conn == PG_SU_CONN_ATOM
-			? "Set PsiProxy's address in the modem (AT$PU) - nothing to set here"
+			? "Nothing to set here - the modem knows the helper"   /* (UI-157: no AT commands) */
 			: "Fastest - get it at " PG_SU_PSIPROXY_URL;
 		}
 	}
 
 /* The longest annotation of each, for the dialog's fixed size */
 #define PG_SU_CONN_NOTE_LONGEST   "The PsiConnect Atom on the serial cable - the Remote link must be off"
-#define PG_SU_HELPER_NOTE_LONGEST "Set PsiProxy's address in the modem (AT$PU) - nothing to set here"
+#define PG_SU_HELPER_NOTE_LONGEST "Private: nobody sees your pages - big sites are slower"
 
 /* The route in plain words, for Page information, About and the start page:
  * "Direct", "Atom modem helper", "PsiProxy on a computer" */

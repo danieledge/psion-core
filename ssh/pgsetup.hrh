@@ -9,10 +9,10 @@ enum TPgSetupControls
 	{
 	EPgSuDlgConn = 0x7c00,   // Connection: This Psion goes online by
 	EPgSuDlgConnNote,        //   ...the annotation under it
-	EPgSuDlgBaud,            //   Speed (modems only)
+	EPgSuDlgBaud,            //   Speed (dimmed but for a WiFi modem)
 	EPgSuDlgHelper,          // Web helper: Pages are fetched by
 	EPgSuDlgHelperNote,      //   ...the annotation under it
-	EPgSuDlgHost,            //   PsiProxy's address
+	EPgSuDlgHost,            //   Helper's address
 	EPgSuDlgPort,            //   Port
 	EPgSuBidTest = 0x7c40    // the Test button (Ctrl+T)
 	};

@@ -41,7 +41,7 @@ RESOURCE ARRAY r_pgsu_conn_lines
 		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgConnNote; control=LABEL { standard_font=EEikLabelFontAnnotation;
 			horiz_align=EEikLabelAlignHLeft; reserve_length=72;
 			txt="The PsiConnect Atom on the serial cable - the Remote link must be off"; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Speed (modems only)"; id=EPgSuDlgBaud;
+		DLG_LINE { type=EEikCtChoiceList; prompt="Speed"; id=EPgSuDlgBaud;
 			control=CHOICELIST { maxdisplaychar=8; array_id=r_pgsu_baud_array; }; }
 		};
 	}
@@ -54,8 +54,8 @@ RESOURCE ARRAY r_pgsu_helper_lines
 			control=CHOICELIST { maxdisplaychar=16; array_id=r_pgsu_helper_array; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgHelperNote; control=LABEL { standard_font=EEikLabelFontAnnotation;
 			horiz_align=EEikLabelAlignHLeft; reserve_length=72;
-			txt="Set PsiProxy's address in the modem (AT$PU) - nothing to set here"; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="PsiProxy's address"; id=EPgSuDlgHost;
+			txt="Private: nobody sees your pages - big sites are slower"; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt=PSILINK_TXT_HELPER_HOST; id=EPgSuDlgHost;
 			control=EDWIN { width=18; maxlength=60; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPgSuDlgPort;
 			control=NUMBER_EDITOR { min=1; max=65535; }; }

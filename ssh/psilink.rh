@@ -9,7 +9,9 @@
 //   Direct                   the program fetches pages itself (no helper)
 //   Atom modem helper        the PsiConnect Atom fetches them (host "psiproxy")
 //   PsiProxy on a computer   PsiProxy on a computer at home (port 8081)
-// The word "proxy" is not used in what the user reads.
+// The word "proxy" is not used in what the user reads. (UI-158) "Web helper"
+// is the one term in prompts and notes; the product names are only in the
+// choice lists and Help.
 #ifndef PSILINK_RH
 #define PSILINK_RH
 
@@ -26,7 +28,7 @@
 #define PSILINK_TXT_HELPER_YES     "Atom modem or PsiProxy"
 #define PSILINK_TXT_HELPER_HOST    "Helper's address"
 #define PSILINK_TXT_HELPER_PORT    "Helper's port"
-#define PSILINK_TXT_HELPER_NOTE    "Atom modem helper: psiproxy, port 8080 - PsiProxy on a computer: its address, 8081"
+#define PSILINK_TXT_HELPER_NOTE    "On the Atom: psiproxy, port 8080 - on a computer: its address, port 8081"
 
 // The route names (the setup assistant's choices, Help, About, Page information)
 #define PSILINK_TXT_DIRECT         "Direct"
