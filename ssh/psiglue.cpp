@@ -3744,7 +3744,7 @@ static void LtReportModem(PgLinkTest* aT)
 		LtSay1(aT, "Only an echo came back - TX and RX may be joined together");
 		break;
 	case PG_AT_GARBAGE:
-		LtSay1(aT, "Garbled reply at ", baud, " baud - wrong baud rate, or TX and RX swapped");
+		LtSay1(aT, "Garbled reply at ", baud, " baud - wrong speed, or TX and RX swapped");
 		break;
 	case PG_AT_TEXT:
 		LtSay1(aT, "The modem replied '", aT->reply, "' instead of OK");
@@ -3762,7 +3762,7 @@ static void LtReportModem(PgLinkTest* aT)
 	if (at != PG_AT_OK && at != PG_AT_ERROR && aT->found_baud >= 0)
 		{
 		const char* f = LtBaudName(aT->found_baud);
-		LtSay1(aT, "The modem answers at ", f, " baud - set Baud rate to ", f);
+		LtSay1(aT, "The modem answers at ", f, " baud - set Speed to ", f);
 		}
 	if (aT->signals)
 		{

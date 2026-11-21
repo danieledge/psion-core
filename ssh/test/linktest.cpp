@@ -85,8 +85,8 @@ int main()
 
 	Blank(t); t.at = PG_AT_GARBAGE; t.found_baud = 4; t.signals = 1;
 	pg_lt_report(&t); Dump("garbage, answers at 115200", t);
-	CHECK(Has(t, "Garbled reply at 57600 baud"));
-	CHECK(Has(t, "The modem answers at 115200 baud - set Baud rate to 115200"));
+	CHECK(Has(t, "Garbled reply at 57600 baud - wrong speed, or TX and RX swapped"));
+	CHECK(Has(t, "The modem answers at 115200 baud - set Speed to 115200"));
 
 	Blank(t); t.rtscts = 1; t.cts_blocked = 1; t.at_noflow = PG_AT_OK; t.signals = 1; t.cts = 0;
 	pg_lt_report(&t); Dump("RTS/CTS on, CTS low", t);
