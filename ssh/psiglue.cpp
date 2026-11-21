@@ -1030,6 +1030,12 @@ static void LinkMsg(const char* aText)
 			gShared->link_msg[k] = p[k];
 			k++;
 			}
+		// link_msg is ASCII text (PsiWeb reads it as UTF-8), so a closing
+		// "..." stays three dots here and each program shows it as its
+		// one-character ellipsis (2.9). A capital first letter: "no answer
+		// - ..." follows "Checking the modem... " in PsiTerm's terminal (Say)
+		if (k > 0 && gShared->link_msg[0] >= 'a' && gShared->link_msg[0] <= 'z')
+			gShared->link_msg[0] = (char)(gShared->link_msg[0] - 'a' + 'A');
 		if (k > 0)
 			{
 			gShared->link_msg[k] = 0;
@@ -3895,7 +3901,7 @@ static void LtModem(RComm& aComm, PgLinkTest* aT)
 	if (at == PG_AT_ECHO || at == PG_AT_NOTHING || at == PG_AT_TEXT)
 		{
 		// still in a call from an old connection? (as pg_dial does)
-		LtProgress(aT, "Testing the modem - ending an old call...");
+		LtProgress(aT, "Testing the modem - ending an old call\x85");
 		LtEscape(aComm);
 		int again = LtAt(aComm, buf, aT, 1500);
 		if (again == PG_AT_OK || again == PG_AT_ERROR)
@@ -3908,7 +3914,7 @@ static void LtModem(RComm& aComm, PgLinkTest* aT)
 	if (at == PG_AT_NOTHING || at == PG_AT_GARBAGE || at == PG_AT_TEXT || at == PG_AT_ECHO)
 		{
 		// the other speeds, flow control off: does the modem answer at one?
-		LtProgress(aT, "Testing the modem at other baud rates...");
+		LtProgress(aT, "Testing the modem at other baud rates\x85");
 		for (int b = 4; b >= 0 && aT->found_baud < 0 && !aT->abort_test; b--)
 			{
 			if (b == aT->baud_index)
@@ -4164,18 +4170,18 @@ extern "C" int pg_link_test(PgLinkTest* aT)
 		}
 	if (aT->net_mode)
 		{
-		LtProgress(aT, "Checking the Internet connection...");
+		LtProgress(aT, "Checking the Internet connection\x85");
 		aT->net_up = LtNifActive();
 		if (aT->net_up == 1)
 			{
-			LtProgress(aT, "Looking up a name...");
+			LtProgress(aT, "Looking up a name\x85");
 			LtLookup(aT, 20000000);
 			}
 		else if (!aT->dial)
 			aT->need_dial = 1;
 		else
 			{
-			LtProgress(aT, "Connecting...");
+			LtProgress(aT, "Connecting\x85");
 			LtPppStart(aT);
 			// (no OK to AT: the modem may be in PPP already - go on, as
 			// StartPpp does; a refused command, or a port that could not be
@@ -4187,7 +4193,7 @@ extern "C" int pg_link_test(PgLinkTest* aT)
 		}
 	else
 		{
-		LtProgress(aT, "Testing the modem...");
+		LtProgress(aT, "Testing the modem\x85");
 		RCommServ server;
 		RComm comm;
 		int serverOpen = 0;

@@ -637,11 +637,11 @@ void CPcPass::RunL(const TDesC& aDir, TBool aCopyExisting)
 	{
 	iDir = aDir;
 	iFs.MkDirAll(iDir);
-	iObserver.CalProgress(_L("Opening Contacts..."));
+	iObserver.CalProgress(_L("Opening Contacts\x85"));
 	iDb = CContactDatabase::OpenL();
 	LoadL(aCopyExisting);
 	ReadPushedL();
-	iObserver.CalProgress(_L("Updating Contacts..."));
+	iObserver.CalProgress(_L("Updating Contacts\x85"));
 	MappedL();
 	NewFromServerL();
 	NewOnPsionL();

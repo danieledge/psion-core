@@ -343,7 +343,7 @@ void PgLinkDisconnectL()
 		env->InfoMsg(_L("Not connected to the Internet"));
 		return;
 		}
-	env->BusyMsgL(_L("Disconnecting..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
+	env->BusyMsgL(_L("Disconnecting\x85"), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
 	TInt r = PsiLinkDisconnect(20000000);
 	env->BusyMsgCancel();
 	if (r == 1)

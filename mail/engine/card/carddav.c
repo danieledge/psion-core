@@ -429,7 +429,7 @@ static int list_books(char *why, int whymax)
 	HttpResp r;
 	char home[200];
 	int res, i, def = -1;
-	pm_progress("Looking for address books...");
+	pm_progress("Looking for address books\x85");
 	if (!g_home[0]) {
 		res = discover(why, whymax);
 		if (res != CAL_RES_OK) return res;
@@ -557,7 +557,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 #define body (g_kw->fb_body)
 	HttpResp r;
 	int res, i, n, k;
-	pm_progress("Fetching %s...", b->name);
+	pm_progress("Fetching %s\x85", b->name);
 	for (i = 0; i < g_ncard; i++) if (!strcmp(g_card[i].book, b->id)) g_card[i].seen = 0;
 	memset(g_dav, 0, sizeof(*g_dav));
 	g_listing = b;
@@ -601,7 +601,7 @@ static int fetch_book(Book *b, int *count, char *why, int whymax)
 		if (r.status != 207) { card_refused(r.status, b->name, why, whymax); return CAL_RES_FAILED; }
 		if (not_whole(b->name, why, whymax)) return CAL_RES_FAILED;
 		*count += g_dav->count;
-		pm_progress("Fetching %s (%d)...", b->name, *count);
+		pm_progress("Fetching %s (%d)\x85", b->name, *count);
 	}
 	return CAL_RES_OK;
 }
@@ -711,7 +711,7 @@ static int push_changes(int *n, char *why, int whymax)
 	while (fgets(line, sizeof(line), f)) {
 		line[strcspn(line, "\r\n")] = 0;
 		if (line[0] == '#' || !line[0]) continue;
-		pm_progress("Sending contact changes (%d of %d)...", done + 1, total);
+		pm_progress("Sending contact changes (%d of %d)\x85", done + 1, total);
 		rc = push_one(line, res, why, whymax);
 		if (rc != CAL_RES_OK) break;
 		done++;

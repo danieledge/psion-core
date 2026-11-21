@@ -403,7 +403,7 @@ void CPmCalSync::StepL()
 	switch (iPhase)
 		{
 	case EOpen:
-		iObserver.CalProgress(_L("Opening the Agenda..."));
+		iObserver.CalProgress(_L("Opening the Agenda\x85"));
 		OpenL();
 		iPhase = EPushed;
 		more = ETrue;
@@ -1520,7 +1520,7 @@ TBool CPmCalSync::MappedStepL()
 	if (iPos == 0)
 		GuardCheck();
 	TBuf<60> prog;
-	prog.Format(_L("Updating the Agenda (%d%%)..."), iMap->Count() ? iPos * 50 / iMap->Count() : 50);
+	prog.Format(_L("Updating the Agenda (%d%%)\x85"), iMap->Count() ? iPos * 50 / iMap->Count() : 50);
 	iObserver.CalProgress(prog);
 	TInt options = (iSettings.iSpare[0] & KPmCalOptKeepBoth) ? CM_OPT_KEEPBOTH : 0;
 	for (TInt n = 0; n < KStep && iPos < iMap->Count(); n++)
@@ -1829,7 +1829,7 @@ TUint32 CPmCalSync::CopyEntryL(TUint32 aAuid)
 TBool CPmCalSync::NewStepL()
 	{
 	TBuf<60> prog;
-	prog.Format(_L("Updating the Agenda (%d%%)..."), 50 + (iEvents->Count() ? iPos * 40 / iEvents->Count() : 40));
+	prog.Format(_L("Updating the Agenda (%d%%)\x85"), 50 + (iEvents->Count() ? iPos * 40 / iEvents->Count() : 40));
 	iObserver.CalProgress(prog);
 	TBuf8<260> key;
 	if (iPos == 0 && (iSettings.iSpare[0] & KPmCalOptSeriesIn))
@@ -1865,7 +1865,7 @@ TBool CPmCalSync::LocalStepL()
 			iObserver.CalLog(_L8("agenda: no calendar for new entries (calendars.txt has none marked D)"));
 			return EFalse;                       // nowhere to put them
 			}
-		iObserver.CalProgress(_L("Looking for new Agenda entries..."));
+		iObserver.CalProgress(_L("Looking for new Agenda entries\x85"));
 		it = CAgnSyncIter::NewL(iServ);
 		iIter = it;
 		it->First();

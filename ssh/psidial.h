@@ -333,7 +333,7 @@ public:
 		if (!iLink.iPppStart.Length())
 			return KErrNone;                 // NetDial dials, as it is set up to
 		if (aSay)
-			aSay(_L("Connecting..."));
+			aSay(_L("Connecting\x85"));
 		TPsiSerial port;
 		TInt r = port.Open(iLink);
 		if (r == KErrInUse || r == KErrAccessDenied)
