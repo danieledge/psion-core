@@ -256,13 +256,40 @@ void ics_text(const char *v, char *out, int max) { text_value(v, out, max); }
 
 /* ------------------------------------------------------------ writing */
 
-typedef struct { char *b; int n, max, bad; } Out;
+/* cap: 0, b holds max bytes (the caller's); else b is malloc'd, cap bytes,
+   and grows up to max + 1 as it is written. (21 November 2026, MEM-31) A
+   change to an event took max + 1 bytes (128 KB) at once however small
+   the event: now its length and 4 KB, grown if the change needs more. */
+typedef struct { char *b; int n, max, bad, cap; } Out;
 
 static void out_raw(Out *o, const char *s, int n)
 {
+	if (o->bad) return;
 	if (o->n + n >= o->max) { o->bad = 1; return; }
+	if (o->cap && o->n + n >= o->cap) {
+		int want = o->cap * 2;
+		char *nb;
+		if (want < o->n + n + 1) want = o->n + n + 1;
+		if (want > o->max + 1) want = o->max + 1;
+		if (!(nb = (char *)realloc(o->b, want))) { o->bad = 1; return; }
+		o->b = nb; o->cap = want;
+	}
 	memcpy(o->b + o->n, s, n);
 	o->n += n;
+}
+
+/* a growing Out for a change to an object of len bytes, at most max
+   (ICS_OUT_ROOM: what it starts with beyond len; the host tests also run
+   with 16, so that every change grows it) */
+#ifndef ICS_OUT_ROOM
+#define ICS_OUT_ROOM 4096
+#endif
+static int out_take(Out *o, int len, int max)
+{
+	o->n = 0; o->max = max; o->bad = 0;
+	o->cap = len + ICS_OUT_ROOM < max + 1 ? len + ICS_OUT_ROOM : max + 1;
+	o->b = (char *)malloc(o->cap);
+	return o->b ? 0 : -1;
 }
 
 /* one content line, folded at 75 octets without splitting a UTF-8 character */
@@ -370,7 +397,7 @@ int ics_new(const IcsChange *c, int zone, const char *uid, char *buf, int max)
 {
 	Out o;
 	char l[200];
-	o.b = buf; o.n = 0; o.max = max; o.bad = 0;
+	o.b = buf; o.n = 0; o.max = max; o.bad = 0; o.cap = 0;
 	out_str(&o, "BEGIN:VCALENDAR");
 	out_str(&o, "VERSION:2.0");
 	out_str(&o, "PRODID:-//PsiMail//Psion Series 5mx//EN");
@@ -603,7 +630,7 @@ int ics_change(char *buf, int len, int max, const char *recurid, const IcsChange
 	if (load(ob, buf, len, zone) != 0) { free(ob); return -1; }
 	master = find_block(ob, "");
 	target = find_block(ob, recurid);
-	o.b = (char *)malloc(max + 1); o.n = 0; o.max = max; o.bad = 0;
+	out_take(&o, len, max);
 	if (!o.b || (target < 0 && (master < 0 || !recurid[0]))) {
 		free(o.b); free(ob->text); free(ob);
 		return -1;
@@ -640,7 +667,7 @@ int ics_partstat(char *buf, int len, int max, const char *recurid, const char *e
 	if (load(ob, buf, len, 0) != 0) { free(ob); return -1; }
 	target = find_block(ob, recurid);
 	if (target < 0) target = find_block(ob, "");
-	o.b = (char *)malloc(max + 1); o.n = 0; o.max = max; o.bad = 0;
+	out_take(&o, len, max);
 	if (!o.b || target < 0) { free(o.b); free(ob->text); free(ob); return -1; }
 	for (i = 0; i < ob->nlines; i++) {
 		const char *s = L(ob, i);
@@ -696,7 +723,7 @@ int ics_exclude(char *buf, int len, int max, const char *recurid, int zone)
 	if (load(ob, buf, len, zone) != 0) { free(ob); return -1; }
 	master = find_block(ob, "");
 	target = find_block(ob, recurid);
-	o.b = (char *)malloc(max + 1); o.n = 0; o.max = max; o.bad = 0;
+	out_take(&o, len, max);
 	if (!o.b || master < 0 || !recurid[0]) { free(o.b); free(ob->text); free(ob); return -1; }
 	for (i = 0; i < ob->nlines; i++) {
 		if (target >= 0 && i >= ob->block[target].start && i <= ob->block[target].end) continue;
@@ -777,7 +804,7 @@ int ics_todo_new(const IcsChange *c, int zone, const char *uid, char *buf, int m
 	Out o;
 	char l[200];
 	(void)zone;
-	o.b = buf; o.n = 0; o.max = max; o.bad = 0;
+	o.b = buf; o.n = 0; o.max = max; o.bad = 0; o.cap = 0;
 	out_str(&o, "BEGIN:VCALENDAR");
 	out_str(&o, "VERSION:2.0");
 	out_str(&o, "PRODID:-//PsiSync//Psion//EN");
@@ -801,7 +828,7 @@ int ics_todo_change(char *buf, int len, int max, const IcsChange *c, int zone)
 	int i, in_todo = 0, done = 0, depth = 0;
 	if (!ob) return -1;
 	if (load(ob, buf, len, zone) != 0) { free(ob); return -1; }
-	o.b = (char *)malloc(max + 1); o.n = 0; o.max = max; o.bad = 0;
+	out_take(&o, len, max);
 	if (!o.b) { free(ob->text); free(ob); return -1; }
 	for (i = 0; i < ob->nlines; i++) {
 		const char *s = L(ob, i);

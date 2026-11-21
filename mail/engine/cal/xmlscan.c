@@ -26,9 +26,21 @@ const char *xs_parent(XmlScan *x, int up)
 	return i >= 0 && i < XS_DEPTH ? x->path[i] : "";
 }
 
+#define XS_STEP (32 * 1024)
+
 static void put(XmlScan *x, const char *s, int n)
 {
-	if (x->len + n >= x->max) { n = x->max - 1 - x->len; x->over = 1; }
+	int lim = x->max;
+	if (x->room) {
+		if (x->len + n >= *x->room && *x->room < x->max) {
+			/* more room, in steps of 32 KB, up to max */
+			int want = (x->len + n + 1 + XS_STEP - 1) / XS_STEP * XS_STEP;
+			if (want > x->max) want = x->max;
+			if (x->grow && x->grow(x->text, (unsigned long)want) == 0) *x->room = want;
+		}
+		if (*x->room < lim) lim = *x->room;
+	}
+	if (x->len + n >= lim) { n = lim - 1 - x->len; x->over = 1; }
 	if (n > 0) { memcpy(x->text + x->len, s, n); x->len += n; }
 }
 

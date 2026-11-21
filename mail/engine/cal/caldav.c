@@ -74,19 +74,23 @@ static char *g_obj;                  /* a calendar object being changed */
 /* What a sync works in is work memory (psiwork.h): taken by cal_sync and
    given back to the Psion when it ends. The lists were statics (32 KB of
    the program's RAM all day) and the two buffers came from the heap, which
-   kept them (EPOC's heap does not shrink by itself). */
+   kept them (EPOC's heap does not shrink by itself).
+   (21 November 2026, MEM-31) The text and the object are blocks of their
+   own that grow in place as they are written (the text from 32 KB, the
+   object from nothing): a sync took 329 KB at once, also when nothing had
+   changed; a sync with no changes now takes about 70 KB. */
 #include "../../../ssh/psiwork.h"
 #define MAX_SERIES 48
 #define MAX_TOUCHED 32
+#define TEXT_START (32 * 1024)
 typedef struct
 	{
 	Cal cal[MAX_CALS];
 	char series[MAX_SERIES][200];        /* hrefs whose masters are to be asked for */
 	char series_etag[MAX_SERIES][80];
 	char touched[MAX_TOUCHED][200];
-	char text[TEXT_MAX];
-	char obj[OBJ_MAX];
 	} CalWork;
+static int g_text_room, g_obj_room;  /* bytes of g_text and g_obj there now */
 static CalWork *g_cw;
 #define g_cal         (g_cw->cal)
 #define g_series      (g_cw->series)
@@ -222,6 +226,7 @@ typedef struct
 	int whole;               /* the multistatus ended: the answer is all there */
 	int truncated;           /* the server cut its own list short (507) */
 	int cut;                 /* an event's calendar data was more than we keep: not all of it read */
+	int nomem;               /* no memory to read an event whole */
 	int got_data;
 	int ndata;
 	/* discovery */
@@ -249,6 +254,11 @@ static void note_whole(Dav *d, const char *name, const char *text)
 
 static int not_whole(Dav *d, const char *what, char *why, int whymax)
 {
+	if (d->nomem) {
+		pm_log("caldav: %s: no memory to read an event", what);
+		snprintf(why, whymax, "Not enough memory for the calendar");
+		return 1;
+	}
 	if (d->cut) {
 		/* (used as whole, a cut series lost its later instances, and their
 		   Agenda entries went as "deleted on the server") */
@@ -262,6 +272,27 @@ static int not_whole(Dav *d, const char *what, char *why, int whymax)
 	return 1;
 }
 
+/* the text buffer for a reply (xmlscan.c grows it as the text needs) */
+static int text_grow(void *p, unsigned long n) { return psi_work_grow(p, n); }
+static void text_init(XmlScan *x, XsEnd end, void *ctx)
+{
+	xs_init(x, g_text, TEXT_MAX, end, ctx);
+	x->room = &g_text_room;
+	x->grow = text_grow;
+}
+
+/* at least n bytes of g_obj there (0), or -1: no memory */
+static int obj_room(int n)
+{
+	if (n > OBJ_MAX) n = OBJ_MAX;
+	if (n <= g_obj_room) return 0;
+	n = (n + 16383) & ~16383;
+	if (n > OBJ_MAX) n = OBJ_MAX;
+	if (psi_work_grow(g_obj, (unsigned long)n) != 0) return -1;
+	g_obj_room = n;
+	return 0;
+}
+
 static int propfind(const char *path, int depth, const char *props, Dav *d, XsEnd end,
                     HttpResp *r, char *why, int whymax)
 {
@@ -272,7 +303,7 @@ static int propfind(const char *path, int depth, const char *props, Dav *d, XsEn
 		"xmlns:CS=\"http://calendarserver.org/ns/\" xmlns:A=\"http://apple.com/ns/ical/\">"
 		"<D:prop>%s</D:prop></D:propfind>", props);
 	snprintf(hdr, sizeof(hdr), "%sDepth: %d\r\n", XML_HDR, depth);
-	xs_init(&d->x, g_text, TEXT_MAX, end, d);
+	text_init(&d->x, end, d);
 	return http_request("PROPFIND", path, hdr, body, n, r, sink, d, why, whymax);
 }
 
@@ -521,10 +552,12 @@ static void report_end(XmlScan *x, const char *name, const char *text, int len, 
 	else if (!strcmp(name, "calendar-data")) {
 		/* keep the data until the response ends: the href and etag may
 		   come after it. The text buffer is ours until the next element. */
-		if (x->over || len >= OBJ_MAX - 1) {
+		if (x->over && g_text_room < TEXT_MAX) d->nomem = 1;   /* (the text could not grow) */
+		else if (x->over || len >= OBJ_MAX - 1) {
 			pm_log("caldav: %s is too big, cut short", d->href);
 			d->cut = 1;
 		}
+		if (len > 0 && obj_room((len < OBJ_MAX - 1 ? len : OBJ_MAX - 1) + 1) != 0) { d->nomem = 1; len = 0; }
 		if (len > 0) {
 			memmove(g_obj, text, len < OBJ_MAX - 1 ? len : OBJ_MAX - 1);
 			d->ndata = len < OBJ_MAX - 1 ? len : OBJ_MAX - 1;
@@ -603,7 +636,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 	memset(g_dav, 0, sizeof(*g_dav));
 	g_dav->out = out;
 	g_dav->calid = c->id;
-	xs_init(&g_dav->x, g_text, TEXT_MAX, report_end, g_dav);
+	text_init(&g_dav->x, report_end, g_dav);
 	res = http_request("REPORT", c->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
 		body, n, &r, sink, g_dav, why, whymax);
 	if (res != CAL_RES_OK) return res;
@@ -631,7 +664,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 			g_dav->out = out;
 			g_dav->calid = c->id;
 			g_dav->count = events;
-			xs_init(&g_dav->x, g_text, TEXT_MAX, report_end, g_dav);
+			text_init(&g_dav->x, report_end, g_dav);
 			g_master_report = 1;
 			res = http_request("REPORT", c->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
 				body, n, &r, sink, g_dav, why, whymax);
@@ -657,7 +690,7 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 		g_dav->out = out;
 		g_dav->calid = c->id;
 		g_dav->count = events;
-		xs_init(&g_dav->x, g_text, TEXT_MAX, report_end, g_dav);
+		text_init(&g_dav->x, report_end, g_dav);
 		g_todo_report = 1;
 		res = http_request("REPORT", c->href, "Content-Type: application/xml; charset=utf-8\r\nDepth: 1\r\n",
 			body, n, &r, sink, g_dav, why, whymax);
@@ -948,6 +981,8 @@ static int push_changes(int *n, char *why, int whymax)
 	if (!(f = fopen(path, "r"))) return CAL_RES_OK;
 	while (fgets(line, sizeof(line), f)) if (line[0] != '#' && line[0] > ' ') total++;
 	if (!total) { fclose(f); remove(path); return CAL_RES_OK; }
+	/* (the changes are made in g_obj in place: all of it) */
+	if (obj_room(OBJ_MAX) != 0) { fclose(f); snprintf(why, whymax, "Not enough memory for the calendar"); return CAL_RES_FAILED; }
 	fseek(f, 0, SEEK_SET);
 	g_ntouched = 0;
 	path_of("pushed.txt", rpath, sizeof(rpath));
@@ -1020,12 +1055,19 @@ int cal_sync(int list_only, char *why, int whymax)
 {
 	int r;
 	if (!g_cw) g_cw = (CalWork *)psi_work_alloc(sizeof(CalWork) + sizeof(Dav));   /* (still there: the last sync was abandoned) */
-	if (!g_cw) { snprintf(why, whymax, "Not enough memory for the calendar"); return CAL_RES_FAILED; }
-	g_text = g_cw->text;
-	g_obj = g_cw->obj;
+	if (g_cw && !g_text) { g_text = (char *)psi_work_alloc_max(TEXT_START, TEXT_MAX); g_text_room = TEXT_START; }
+	if (g_cw && g_text && !g_obj) { g_obj = (char *)psi_work_alloc_max(0, OBJ_MAX); g_obj_room = 0; }
+	if (!g_cw || !g_text || !g_obj) {
+		psi_work_free(g_obj); psi_work_free(g_text); psi_work_free(g_cw);
+		g_obj = g_text = 0; g_cw = 0;
+		snprintf(why, whymax, "Not enough memory for the calendar");
+		return CAL_RES_FAILED;
+	}
 	g_dav = (Dav *)(g_cw + 1);
 	r = sync_now(list_only, why, whymax);
-	g_text = 0; g_obj = 0; g_dav = 0;
+	g_dav = 0;
+	psi_work_free(g_obj); g_obj = 0; g_obj_room = 0;
+	psi_work_free(g_text); g_text = 0; g_text_room = 0;
 	psi_work_free(g_cw); g_cw = 0;
 	psi_work_trim();                     /* (and what the objects took from the heap) */
 	return r;

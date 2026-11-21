@@ -47,6 +47,11 @@ struct XmlScan
 	int over;                /* text was cut short */
 	XsEnd end;
 	void *ctx;
+	/* (21 November 2026) a text buffer that grows in place (psiwork.h's
+	   psi_work_grow): *room bytes of max are there now, grow(text, n) takes
+	   more (0 ok). room 0 (as xs_init leaves it): all max are there */
+	int *room;
+	int (*grow)(void *text, unsigned long bytes);
 	};
 void xs_init(XmlScan *x, char *textbuf, int textmax, XsEnd end, void *ctx);
 void xs_feed(XmlScan *x, const char *in, int n);
