@@ -1,15 +1,8 @@
-// psihelp.cpp - the Help dialog's text with its scroll bar (psihelp.h), for
-// every bundled program: its .mmp adds this file beside pglinktest.cpp
-// (SUBPROJECT psitermssh, SOURCE psihelp.cpp) and links form.lib.
+// psihelp.cpp - the Help dialog's text in whole lines, with a scroll bar
+// only when it is longer than its box (psihelp.h), for every bundled
+// program: its .mmp adds this file beside pglinktest.cpp (SUBPROJECT
+// psitermssh, SOURCE psihelp.cpp) and links form.lib.
 #include "psihelp.h"
-
-void CPsiHelpText::TextChangedL()
-	{
-	iAbove = 0;
-	iAtEnd = EFalse;
-	iEditor->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible);
-	UpdateBar();
-	}
 
 void CPsiHelpText::ConstructFromResourceL(TResourceReader& aReader)
 	{
@@ -43,58 +36,83 @@ TInt CPsiHelpText::LineHeight() const
 
 TSize CPsiHelpText::MinimumSize()
 	{
-	TSize s = iEditor->MinimumSize();
 	TInt lines = iEikonEnv->ScreenDevice()->SizeInPixels().iHeight >= 400 ? 12 : 7;
-	return TSize(s.iWidth + KPsiHelpBarW + 2, lines * LineHeight() + 2);
+	return TSize(iEditor->MinimumSize().iWidth + KPsiHelpBarW + 2, lines * LineHeight() + 2);
 	}
 
-void CPsiHelpText::Layout()
+void CPsiHelpText::FormatL()
+	{
+	CTextView* view = iEditor->TextView();
+	if (!view || !iEditor->TextLayout())
+		return;
+	iEditor->TextLayout()->SetAmountToFormat(CTextLayout::EFFormatAllText);
+	view->FormatTextL();
+	}
+
+TInt CPsiHelpText::Count() const
+	{
+	CTextLayout* lay = iEditor->TextLayout();
+	return lay ? lay->NumFormattedLines() : 0;
+	}
+
+TInt CPsiHelpText::Shown() const
+	{
+	return iLineH > 0 ? iEditor->Rect().Height() / iLineH : 0;
+	}
+
+// whole lines high (any pixels over stay blank below the last), as wide as
+// the line less the bar when the text is longer than the box
+void CPsiHelpText::LayoutL()
 	{
 	if (!iEditor)
 		return;
 	TRect r = Rect();
 	r.Shrink(1, 1);
-	iBar = TRect(r.iBr.iX - KPsiHelpBarW, r.iTl.iY, r.iBr.iX, r.iBr.iY);
-	TRAPD(err, iEditor->SetRectL(TRect(r.iTl, TPoint(iBar.iTl.iX, r.iBr.iY))));
-	(void)err;
+	if (r.Width() <= KPsiHelpBarW + 8 || r.Height() <= 8)
+		return;
+	iLineH = LineHeight();
+	TInt h = (r.Height() / iLineH) * iLineH;
+	if (h <= 0)
+		h = r.Height();
+	iEditor->SetRectL(TRect(r.iTl, TSize(r.Width() - KPsiHelpBarW, h)));
+	FormatL();
+	if (Count() > Shown())
+		iBar = TRect(r.iBr.iX - KPsiHelpBarW, r.iTl.iY, r.iBr.iX, r.iBr.iY);
+	else
+		{
+		iBar = TRect();
+		iEditor->SetRectL(TRect(r.iTl, TSize(r.Width(), h)));
+		FormatL();
+		}
+	iTopLine = 0;
 	}
 
-void CPsiHelpText::Model(TInt& aTotal, TInt& aShown, TInt& aAbove) const
+void CPsiHelpText::TextChangedL()
 	{
-	CTextLayout* lay = iEditor->TextLayout();
-	aShown = iEditor->Rect().Height();
-	aTotal = lay ? lay->FormattedHeightInPixels() : aShown;
-	TInt chars = iEditor->TextLength();
-	if (chars > 2000)
-		{
-		const CFont* f = iEikonEnv->NormalFont();
-		TInt perLine = iEditor->Rect().Width() / (f->WidthZeroInPixels() > 0 ? f->WidthZeroInPixels() : 8);
-		if (perLine < 10) perLine = 10;
-		TInt est = (chars / perLine + chars / 300 + 2) * LineHeight();
-		if (est > aTotal) aTotal = est;
-		}
-	if (iAtEnd) aTotal = iAbove + aShown;
-	if (aTotal < aShown) aTotal = aShown;
-	aAbove = iAbove;
-	if (aAbove > aTotal - aShown) aAbove = aTotal - aShown;
-	if (aAbove < 0) aAbove = 0;
+	iTopLine = 0;
+	iPress = 0;
+	if (iEditor->TextView())
+		iEditor->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible);
+	LayoutL();
+	if (IsReadyToDraw())
+		DrawDeferred();                 // (all of it again: the text's width may have changed)
 	}
 
 void CPsiHelpText::Parts(TRect& aShaft, TRect& aThumb, TRect& aUp, TRect& aDown) const
 	{
-	TInt total, shown, above;
-	Model(total, shown, above);
 	const TRect& r = iBar;
-	const TInt bh = 20;
-	aDown = TRect(r.iTl.iX, r.iBr.iY - bh, r.iBr.iX, r.iBr.iY);
-	aUp = TRect(r.iTl.iX, r.iBr.iY - 2 * bh, r.iBr.iX, r.iBr.iY - bh);
+	aDown = TRect(r.iTl.iX, r.iBr.iY - KPsiHelpButH, r.iBr.iX, r.iBr.iY);
+	aUp = TRect(r.iTl.iX, r.iBr.iY - 2 * KPsiHelpButH, r.iBr.iX, r.iBr.iY - KPsiHelpButH);
 	aShaft = TRect(r.iTl.iX, r.iTl.iY, r.iBr.iX, aUp.iTl.iY);
+	TInt total = Count(), shown = Shown();
+	if (total < shown)
+		total = shown;
 	TInt sh = aShaft.Height();
 	TInt th = total > 0 ? sh * shown / total : sh;
 	if (th < 16) th = 16;
 	if (th > sh) th = sh;
 	TInt room = total - shown;
-	TInt ty = aShaft.iTl.iY + (room > 0 ? (sh - th) * above / room : 0);
+	TInt ty = aShaft.iTl.iY + (room > 0 ? (sh - th) * Min(iTopLine, room) / room : 0);
 	aThumb = TRect(aShaft.iTl.iX, ty, aShaft.iBr.iX, ty + th);
 	}
 
@@ -138,7 +156,7 @@ void CPsiHelpText::DrawBar(CWindowGc& aGc) const
 	aGc.SetBrushColor(iEikonEnv->ControlColor(EEikColorScrollBarShaft, *this));
 	aGc.DrawRect(shaft);
 	TRect t(thumb.iTl.iX + 1, thumb.iTl.iY, thumb.iBr.iX - 1, thumb.iBr.iY);
-	Face(aGc, t, EFalse);
+	Face(aGc, t, iPress == 3);
 	aGc.SetPenColor(KRgbBlack);
 	TInt cy = t.iTl.iY + t.Height() / 2;
 	for (TInt k = -4; k <= 4; k += 2)
@@ -151,127 +169,117 @@ void CPsiHelpText::DrawBar(CWindowGc& aGc) const
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	}
 
+// the line's edge, as the dialog's other lines; white under the last whole
+// line (the editor draws the text and its own ground)
 void CPsiHelpText::Draw(const TRect& /*aRect*/) const
 	{
 	CWindowGc& gc = SystemGc();
-	gc.SetPenStyle(CGraphicsContext::ESolidPen);   // the line's edge, as the dialog's other lines
+	gc.SetPenStyle(CGraphicsContext::ESolidPen);
 	gc.SetPenColor(KRgbBlack);
 	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	gc.DrawRect(Rect());
+	if (iEditor)
+		{
+		TRect r = Rect();
+		r.Shrink(1, 1);
+		TRect e = iEditor->Rect();
+		TRect below(r.iTl.iX, e.iBr.iY, iBar.Width() > 0 ? iBar.iTl.iX : r.iBr.iX, r.iBr.iY);
+		if (below.Height() > 0)
+			{
+			gc.SetPenStyle(CGraphicsContext::ENullPen);
+			gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+			gc.SetBrushColor(KRgbWhite);
+			gc.DrawRect(below);
+			}
+		}
 	DrawBar(gc);
 	}
 
 void CPsiHelpText::UpdateBar()
 	{
-	if (!IsReadyToDraw())
+	if (!IsReadyToDraw() || iBar.Width() <= 0)
 		return;
 	ActivateGc();
 	DrawBar(SystemGc());
 	DeactivateGc();
 	}
 
-TBool CPsiHelpText::AtEnd() const
+void CPsiHelpText::ScrollToL(TInt aTop)
 	{
-	return iAtEnd;
-	}
-
-TInt CPsiHelpText::ScrollL(TCursorPosition::TMovementType aMove)
-	{
-	TInt px = iEditor->TextView()->ScrollDisplayL(aMove);
-	if (px < 0) px = -px;
-	TBool down = aMove == TCursorPosition::EFLineDown || aMove == TCursorPosition::EFPageDown;
-	if (down)
-		iAtEnd = (px == 0);
-	else if (px > 0)
-		iAtEnd = EFalse;
-	iAbove += down ? px : -px;
-	if (iAbove < 0) iAbove = 0;
-	iEditor->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible);
+	TInt most = Count() - Shown();
+	if (aTop > most)
+		aTop = most;
+	if (aTop < 0)
+		aTop = 0;
+	if (aTop == iTopLine || !iEditor->TextView())
+		return;
+	TPoint moved = iEditor->TextView()->SetViewLineAtTopL(aTop + 1);
+	iTopLine = aTop;
+	if (moved.iY == CTextLayout::EFScrollRedrawWholeScreen)
+		iEditor->DrawNow();
 	UpdateBar();
-	return px;
 	}
 
 TKeyResponse CPsiHelpText::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType)
 	{
 	if (aType != EEventKey)
 		return EKeyWasNotConsumed;
+	TInt page = Shown() > 1 ? Shown() - 1 : 1;
 	switch (aKeyEvent.iCode)
 		{
 	case EKeyUpArrow:
-		if (iAbove <= 0 || ScrollL(TCursorPosition::EFLineUp) == 0)
-			{
-			iAbove = 0;
-			UpdateBar();
-			if (iTop.iFunction)
-				iTop.CallBack();
-			}
-		return EKeyWasConsumed;
+		if (iTopLine > 0)
+			ScrollToL(iTopLine - 1);
+		else if (iTop.iFunction)
+			iTop.CallBack();
+		break;
 	case EKeyDownArrow:
-		if (!AtEnd())
-			ScrollL(TCursorPosition::EFLineDown);
-		return EKeyWasConsumed;
+		ScrollToL(iTopLine + 1);
+		break;
 	case EKeyPageUp:
-		ScrollL(TCursorPosition::EFPageUp);
-		return EKeyWasConsumed;
+		ScrollToL(iTopLine - page);
+		break;
 	case EKeyPageDown:
-		if (!AtEnd())
-			ScrollL(TCursorPosition::EFPageDown);
-		return EKeyWasConsumed;
+		ScrollToL(iTopLine + page);
+		break;
 	case EKeyHome:
-		{
-		for (TInt guard = 0; guard < 100 && iAbove > 0 && ScrollL(TCursorPosition::EFPageUp) > 0; guard++) {}
-		iAbove = 0;
-		UpdateBar();
-		return EKeyWasConsumed;
-		}
+		ScrollToL(0);
+		break;
 	case EKeyEnd:
-		{
-		for (TInt guard = 0; guard < 100 && !AtEnd() && ScrollL(TCursorPosition::EFPageDown) > 0; guard++) {}
-		return EKeyWasConsumed;
-		}
+		ScrollToL(Count());
+		break;
 	default:
 		return EKeyWasNotConsumed;
 		}
+	return EKeyWasConsumed;
 	}
 
 void CPsiHelpText::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
+	if (iBar.Width() <= 0)
+		return;                          // (the text: nothing to select)
 	TPoint p = aEvent.iPosition;
 	TRect shaft, thumb, up, down;
 	Parts(shaft, thumb, up, down);
+	TInt page = Shown() > 1 ? Shown() - 1 : 1;
 	if (aEvent.iType == TPointerEvent::EButton1Down)
 		{
 		iPress = 0;
 		if (!iBar.Contains(p))
-			return;                      // (the text: nothing to select)
-		if (up.Contains(p)) { iPress = 1; ScrollL(TCursorPosition::EFLineUp); }
-		else if (down.Contains(p)) { iPress = 2; if (!AtEnd()) ScrollL(TCursorPosition::EFLineDown); }
+			return;
+		if (up.Contains(p)) { iPress = 1; ScrollToL(iTopLine - 1); }
+		else if (down.Contains(p)) { iPress = 2; ScrollToL(iTopLine + 1); }
 		else if (thumb.Contains(p)) { iPress = 3; iGrab = p.iY - thumb.iTl.iY; }
-		else if (p.iY < thumb.iTl.iY) ScrollL(TCursorPosition::EFPageUp);
-		else if (!AtEnd()) ScrollL(TCursorPosition::EFPageDown);
+		else ScrollToL(p.iY < thumb.iTl.iY ? iTopLine - page : iTopLine + page);
 		UpdateBar();
-		return;
 		}
-	if (aEvent.iType == TPointerEvent::EDrag && iPress == 3)
+	else if (aEvent.iType == TPointerEvent::EDrag && iPress == 3)
 		{
-		TInt total, shown, above;
-		Model(total, shown, above);
-		TInt room = shaft.Height() - thumb.Height();
-		if (room > 0 && total > shown)
-			{
-			TInt want = (p.iY - iGrab - shaft.iTl.iY) * (total - shown) / room;
-			for (TInt guard = 0; guard < 200; guard++)
-				{
-				TInt at = iAbove;
-				if (at + 12 < want && !AtEnd()) ScrollL(TCursorPosition::EFLineDown);
-				else if (at - 12 > want && at > 0) ScrollL(TCursorPosition::EFLineUp);
-				else break;
-				if (iAbove == at) break;
-				}
-			}
-		return;
+		TInt room = shaft.Height() - thumb.Height(), most = Count() - Shown();
+		if (room > 0 && most > 0)
+			ScrollToL(((p.iY - iGrab - shaft.iTl.iY) * most + room / 2) / room);
 		}
-	if (aEvent.iType == TPointerEvent::EButton1Up && iPress)
+	else if (aEvent.iType == TPointerEvent::EButton1Up && iPress)
 		{
 		iPress = 0;
 		UpdateBar();
