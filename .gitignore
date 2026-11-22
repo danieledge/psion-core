@@ -8,6 +8,9 @@ ssh/psilinktest
 ssh/pgdevboxtest
 ssh/psiholdtest
 ssh/psierrtest
+ssh/setuptest
+ssh/aesgcmtest
+ssh/tlstest
 tools/sbtest/sbtest
 tools/drawtest/fbtest
 tools/shot/host
