@@ -169,6 +169,33 @@ static int gDcdLost = 0;                  // a read or write failed with -29: no
 static TUint gCommHandshake = 0;          // iHandshake without the DCD bit
 static int gNetClosedWhy = 0;             // the error that set gNetClosed (0: EOF/none)
 static int gModemOnline = 0;              // modem route: CONNECT seen, not hung up since
+
+// (22 November 2026) While a modem-route connection is open (CONNECT seen,
+// not hung up since), a global semaphore of this name exists, so Coda's
+// toolbar can say "Online" for the Atom modem as it does for Psion
+// Internet (whose PPP it sees by itself). Nothing is written anywhere:
+// looking for it (TFindSemaphore, psilink.h's PsiModemLinkUp) opens
+// nothing, and the kernel removes it when the connection ends or the
+// engine does, however it ends.
+static RSemaphore* gOnlineSem = 0;
+static void ModemOnline(int aOn)
+	{
+	gModemOnline = aOn;
+	if (aOn && !gOnlineSem)
+		{
+		RSemaphore* s = new RSemaphore;
+		if (s && s->CreateGlobal(KPsiModemLinkName, 0) == KErrNone)
+			gOnlineSem = s;
+		else
+			delete s;                    // (another engine's already says so)
+		}
+	else if (!aOn && gOnlineSem)
+		{
+		gOnlineSem->Close();
+		delete gOnlineSem;
+		gOnlineSem = 0;
+		}
+	}
 static int gLinkDoubt = 0;                // switched on with no DCD to ask: probe the link (pg_take_link_doubt)
 
 // 1 once after a switch-on left the modem link in doubt (no carrier detect
@@ -1599,6 +1626,23 @@ static int NetConnect(char* aResult, int aMax)
 			gAddrHost[0] = 0;            // look the name up afresh next time
 		NetHint(gConnStat.Int());
 		SetMsgNet(aResult, aMax, "Could not connect to the server", gConnStat.Int());
+		// (22 November 2026) Refused: the server (or a PsiProxy that is not
+		// running) answered across the link, which proves the link works.
+		// Only this connection failed: keep the link and its session as a
+		// closed connection leaves them, and no fail-hold - the next request
+		// (PsiWeb's next picture, the page after) goes straight out. It was
+		// "The Psion's Internet connection failed a moment ago" for 8 s. A
+		// -34 while the link is not up (the dial-up's own failure) is still
+		// a failed start.
+		if (gConnStat.Int() == KErrCouldNotConnect && (gLinkProven || LinkUp() == 1))
+			{
+			LinkLog("connect refused by the server: the link is up - kept, no fail-hold");
+			gLinkProven = 1;
+			gClaimUp = 0;
+			SeenData();                  // (an answer came over the link)
+			gLinkFailAt = TInt64(0);
+			return -1;
+			}
 		NetFail();
 		return -1;
 		}
@@ -1854,10 +1898,14 @@ static int OpenSerial()
 	// The UART is unpowered, and DTR not really asserted, until the first
 	// read or write: a zero-length read powers it up now (cmterm.cpp does the
 	// same), so the modem sees DTR before we talk to it.
+	// (22 November 2026) Bounded: in the emulator, opening the port again
+	// moments after NIFMAN let it go, this read waited for the modem's
+	// next byte (59 s, until the Atom's stand-in ended its call), and the
+	// redial with it. Half a second powers the UART up just the same.
 		{
 		TRequestStatus wake;
 		TBuf8<4> none;
-		gComm->Read(wake, none, 0);
+		gComm->Read(wake, TTimeIntervalMicroSeconds32(500000), none, 0);
 		User::WaitForRequest(wake);
 		}
 	gDcdFail = 0;
@@ -2100,7 +2148,7 @@ extern "C" void pg_link_close()
 		gComm->Close();
 		gCommOpen = 0;
 		}
-	gModemOnline = 0;
+	ModemOnline(0);
 	gLinkDoubt = 0;
 	gRxPos = gRxLen = 0;
 	}
@@ -2391,7 +2439,7 @@ extern "C" void pg_exit_process(int aCode)
 static void CarrierLost(TInt aErr)
 	{
 	gDcdLost = 1;
-	gModemOnline = 0;
+	ModemOnline(0);
 	if (gNetClosed)
 		return;
 	gNetClosed = 1;
@@ -2734,16 +2782,21 @@ static int StartPpp(char* aResult, int aResultMax)
 	const char* cmd = gShared->ppp_start;
 	gNet = 0;                            // the serial helpers below talk to COMM::0
 	int r = OpenSerial();
-	if (r == -10 && gPortStale)
+	// (22 November 2026) NIFMAN still holding the port it is letting go of
+	// answers "access denied" (-13) as often as "in use" (-10), seen in the
+	// emulator after a Stop: either is waited out here. (-13 was taken for
+	// another program's, and the redial went on without the first command)
+	if ((r == -10 || r == -13) && gPortStale)
 		{
 		// The last attempt timed out over a dead link and NIFMAN was told to
-		// hang it up (NetFailDead), but it may still hold COMM::0 for a moment.
-		// "Busy" is then NOT "the link is up": wait, bounded, for the port to
-		// come free (asking NIFMAN to stop again half way), then dial afresh.
+		// hang it up (NetFailDead), or the link was going down (WaitHangUp),
+		// but it may still hold COMM::0 for a moment. "Busy" is then NOT "the
+		// link is up": wait, bounded, for the port to come free (asking
+		// NIFMAN to stop again half way), then dial afresh.
 		Say("  Waiting for the old Internet connection to let go of the serial port...\r\n");
 		TInt64 t0 = NowMicro();
 		int stopAgain = 1;
-		while (r == -10 && NowMicro() - t0 < TInt64(KPortFreeWaitUs))
+		while ((r == -10 || r == -13) && NowMicro() - t0 < TInt64(KPortFreeWaitUs))
 			{
 			if (pg_quit_requested())
 				break;
@@ -2756,7 +2809,7 @@ static int StartPpp(char* aResult, int aResultMax)
 			r = OpenSerial();
 			}
 		gPortStale = 0;
-		if (r == -10 || pg_quit_requested())
+		if (r == -10 || r == -13 || pg_quit_requested())
 			{
 			if (gCommOpen) { gComm->Close(); gCommOpen = 0; }
 			gNet = 1;
@@ -2883,6 +2936,8 @@ static int StartPpp(char* aResult, int aResultMax)
 			if (StartsWith(line, "CONNECT"))
 				{
 				rc = 0;
+				if (aResultMax > 0)
+					aResult[0] = 0;      // (the failure set above is not the outcome: a dial that then works reported it)
 				break;
 				}
 			if (StartsWith(line, "ERROR") || StartsWith(line, "NO CARRIER")
@@ -2903,6 +2958,51 @@ static int StartPpp(char* aResult, int aResultMax)
 	if (rc == 0)
 		pg_msleep(200);
 	return rc;
+	}
+
+// (22 November 2026) Is NIFMAN taking the link down? It still calls the link
+// "active" while it hangs up (after a Disconnect, our own Stop, another
+// program's, a restarted engine's), and a link claimed in that state was
+// dialled again by NetDial on its own, with its modem script and without
+// the Psion Internet start command: through the Atom, NO CARRIER. Waits,
+// bounded, for the hang-up to finish. Returns 1 if a hang-up was seen (the
+// link is then down: start it our way, StartPpp waiting for the port).
+static int WaitHangUp()
+	{
+	if (!NifOpen() || NifActive() != 1)
+		return 0;
+	TInt st = NifStage();
+	if (st != EStartingHangUp && st != EFinishedHangUp)
+		return 0;
+	LinkLogNum("nifman: the link is hanging up (stage): waiting, then starting it again with the first command ", st);
+	Say("  Waiting for the old Internet connection to finish hanging up...\r\n");
+	TInt64 t0 = NowMicro();
+	while (NowMicro() - t0 < TInt64(KStopSettleUs))
+		{
+		if (pg_quit_requested())
+			break;
+		pg_msleep(500);
+		if (NifActive() != 1)
+			break;
+		st = NifStage();
+		if (st != EStartingHangUp && st != EFinishedHangUp)
+			break;
+		}
+	return 1;
+	}
+
+// Is a link NIFMAN calls up one to claim (use without dialling)? Not one
+// going down (WaitHangUp), and not, right after our own Stop (aAfterStop),
+// one that shows no stage of a link up or coming up: that is the old link,
+// and a redial must send the same sequence as the first dial (StartPpp).
+static int NifClaimable(int aAfterStop)
+	{
+	if (!NifOpen() || NifActive() != 1)
+		return 0;
+	if (!aAfterStop)
+		return 1;
+	TInt st = NifStage();
+	return StageIsOpen(st) || (st >= EStartingSelection && st <= EFinishedLogIn);
 	}
 
 // The Psion Internet route of pg_dial: bring the link up if need be, then
@@ -3001,6 +3101,18 @@ static int PppDial(char* aResult, int aResultMax)
 		Say("  The Psion's Internet connection has gone: starting it again.\r\n");
 		NetClose();
 		}
+	// (22 November 2026) A redial sends the same sequence as the first dial:
+	// a link going down is waited for and started again our way (the
+	// session, if held, closed with it), and after pg_dial's own Stop
+	// (NetFailDead: gPortStale) the old link is never claimed
+	int afterStop = gPortStale;
+	if (WaitHangUp())
+		{
+		if (gSsOpen)
+			NetClose();
+		afterStop = 1;
+		gPortStale = 1;              // (NIFMAN may hold COMM::0 a moment more: StartPpp waits for it)
+		}
 	if (gSsOpen && !gLinkProven)
 		{
 		gClaimUp = 1;                // a held session on a link that "is up" and has carried nothing since the last failure: unproven
@@ -3013,7 +3125,7 @@ static int PppDial(char* aResult, int aResultMax)
 	// the other app's session). If it is up, claim it and let the connect probe
 	// it, rather than dialling again. NifActive() needs a NIFMAN session, which
 	// a fresh app has not opened yet, so open it here.
-	if (!gSsOpen && NifOpen() && NifActive() == 1)
+	if (!gSsOpen && NifClaimable(afterStop))
 		{
 		gClaimUp = 1;
 		LinkLog("nifman: a link is already up (perhaps another program): not starting PPP, probing it");
@@ -3061,7 +3173,7 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	gNetClosed = 0;                      // a fresh connection (update does two)
 	gNetClosedWhy = 0;
 	gKeptAwake = 0;
-	gModemOnline = 0;
+	ModemOnline(0);
 	gLinkDoubt = 0;
 	gRxPos = gRxLen = 0;
 	// with no link open, the route the chunk names now: a program that runs
@@ -3237,7 +3349,7 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			while (gRxPos < gRxLen && (gRx[gRxPos] == '\r' || gRx[gRxPos] == '\n'))
 				gRxPos++;
 			DcdArm();                    // carrier detect, if the modem gives us DCD
-			gModemOnline = 1;
+			ModemOnline(1);
 			return 0;
 			}
 		if (StartsWith(line, "NO CARRIER") || StartsWith(line, "ERROR") ||
@@ -3265,7 +3377,7 @@ extern "C" void pg_hangup()
 	if (!gCommOpen)
 		return;
 	int lost = gDcdLost && gDcdFail;
-	gModemOnline = 0;
+	ModemOnline(0);
 	gLinkDoubt = 0;
 	DcdDisarm();                         // the AT dialogue needs the plain setup
 	if (lost)

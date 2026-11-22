@@ -79,10 +79,20 @@ so what the dialog shows is what the program uses.
 - PsiProxy on a computer: "Fastest - get it at github.com/danieledge/psiproxy"; through the Atom: "Set PsiProxy's address in the modem (AT$PU) - nothing to set here"
 
 **On OK.** PsiProxy chosen with no address: infoprint "No address entered",
-the cursor to that line. PsiProxy chosen: the query "Pages and passwords
-cross your network unencrypted / Use PsiProxy on this network?" (Esc is
-No; No keeps the dialog). Then `PsiLink.ini` is saved, then the program's
-own pages (`AppSaveL`). Cancel discards everything.
+the cursor to that line. PsiProxy on a computer chosen and **new to the
+settings** (not the helper `PsiLink.ini` already has, at the same address
+and port; `pg_su_privacy_query_due`): a question in a dialog of its own
+(`CPgSuQueryDialog`, pgsetup.rssi's `r_pgsu_query_dialog`, which the
+program passes as the constructor's third argument): title "PsiProxy on a
+computer"; in bold "Pages and passwords cross your network unencrypted";
+as an annotation why, "Between this Psion and PsiProxy at 192.168.7.10 -
+fine at home, not on public WiFi" (through the Atom modem: "Between the
+Atom modem and PsiProxy - ..."); then "Use PsiProxy on this network?",
+No and Yes (Esc is No; No keeps the dialog). OK with nothing changed, or
+after another change, does not ask again (22 November 2026; it asked at
+every OK). A program that passes no dialog gets the question in a query
+window as before, under the same rule. Then `PsiLink.ini` is saved, then
+the program's own pages (`AppSaveL`). Cancel discards everything.
 
 **Test** (Ctrl+T, on every page): Connection settings' own Test
 (`PgLinkTestL`) with the way online shown and the flow control and first
@@ -133,7 +143,7 @@ C++, with nothing of the program's own to set:
 // at the end of the app UI's ConstructL (after the view is up):
 if (CPgSetupDialog::FirstRun(iCoeEnv->FsSession(), KIniFile))
 	{
-	PgSetupRunL(R_PM_SETUP_DIALOG, R_PM_TEST_DIALOG, EPmDlgTest1);
+	PgSetupRunL(R_PM_SETUP_DIALOG, R_PM_TEST_DIALOG, EPmDlgTest1, R_PGSU_QUERY_DIALOG);
 	// then reload the shared link into the program's own copy and save its settings file
 	}
 ```
@@ -141,5 +151,6 @@ if (CPgSetupDialog::FirstRun(iCoeEnv->FsSession(), KIniFile))
 With pages of its own (PsiWeb's *Pages*), derive from `CPgSetupDialog` and
 fill `AppPreLayoutL` (set the program's lines), `AppChoiceChangedL` (follow
 `Choice()`, for example a standard that depends on the route),
-`AppOkToExitL` and `AppSaveL` (save the program's own settings). The
+`AppOkToExitL` and `AppSaveL` (save the program's own settings), and pass
+`R_PGSU_QUERY_DIALOG` as the constructor's third argument. The
 program's own control ids must stay outside 0x7c00 to 0x7cff.

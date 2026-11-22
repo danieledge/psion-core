@@ -146,7 +146,7 @@ static inline int pg_su_check(const PgSuChoice* aC)
 	return 0;
 	}
 
-/* Ask about plain HTTP across the network before OK is taken */
+/* PsiProxy on a computer is chosen: pages cross the network as plain HTTP */
 static inline int pg_su_needs_privacy_query(const PgSuChoice* aC) { return aC->helper == PG_SU_HELPER_PSIPROXY; }
 
 /* Writes the choice into aLink: only the fields listed at the top */
@@ -180,6 +180,59 @@ static inline void pg_su_to_link(const PgSuChoice* aC, PgSuLink* aLink)
 		pg_su_copy(aLink->host, aC->host);
 		aLink->port = aC->port > 0 && aC->port < 65536 ? aC->port : PG_SU_PSIPROXY_PORT;
 		}
+	}
+
+/* (22 November 2026) Ask about plain HTTP across the network on OK? Only
+ * when PsiProxy on a computer is NEW to the settings: not the helper they
+ * already had (aWas, PsiLink.ini as it is; aHadFile: the file was there),
+ * at the same address and port. So OK with nothing changed, or after
+ * another change, never asks again (it asked at every OK). As PsiWeb 1.03 */
+static inline int pg_su_privacy_query_due(const PgSuChoice* aC, const PgSuLink* aWas, int aHadFile)
+	{
+	if (!pg_su_needs_privacy_query(aC))
+		return 0;
+	PgSuLink now = *aWas;
+	pg_su_to_link(aC, &now);
+	return !(aHadFile && aWas->use_proxy && pg_su_same(aWas->host, now.host) && aWas->port == now.port);
+	}
+
+/* The question's words, in its own dialog (not its title bar): the title,
+ * the fact (bold), why (an annotation, PG_SU_QUERY_WHY_MAX at most), then
+ * the question, before No and Yes */
+#define PG_SU_QUERY_TITLE    "PsiProxy on a computer"
+#define PG_SU_QUERY_FACT     "Pages and passwords cross your network unencrypted"
+#define PG_SU_QUERY_QUESTION "Use PsiProxy on this network?"
+#define PG_SU_QUERY_HOST_MAX 24            /* the address shown, at most */
+#define PG_SU_QUERY_WHY_MAX  110
+/* the label's size: as wide as the widest text it takes on a 640-pixel
+   screen (fifteen W's stand for an address of 24 ordinary letters, as
+   measured in PsiWeb 1.03) */
+#define PG_SU_QUERY_WHY_LONGEST "Between this Psion and PsiProxy at WWWWWWWWWWWWWWW - fine at home, not on public WiFi"
+
+/* why, for the choice: through the Atom modem the plain part is the modem's
+ * hop to PsiProxy; otherwise the Psion's own, to the address (cut to
+ * PG_SU_QUERY_HOST_MAX). aOut holds PG_SU_QUERY_WHY_MAX + 1 */
+static inline void pg_su_query_why(const PgSuChoice* aC, char* aOut)
+	{
+	const char* a;
+	int n = 0;
+	if (aC->conn == PG_SU_CONN_ATOM)
+		a = "Between the Atom modem and PsiProxy";
+	else
+		{
+		a = "Between this Psion and PsiProxy at ";
+		while (*a && n < PG_SU_QUERY_WHY_MAX)
+			aOut[n++] = *a++;
+		for (int i = 0; aC->host[i] && i < PG_SU_QUERY_HOST_MAX && n < PG_SU_QUERY_WHY_MAX; i++)
+			aOut[n++] = aC->host[i];
+		a = "";
+		}
+	while (*a && n < PG_SU_QUERY_WHY_MAX)
+		aOut[n++] = *a++;
+	a = " - fine at home, not on public WiFi";
+	while (*a && n < PG_SU_QUERY_WHY_MAX)
+		aOut[n++] = *a++;
+	aOut[n] = 0;
 	}
 
 /* The annotations under the two choices (one paragraph each). aTall: the
@@ -240,8 +293,10 @@ class CPgSetupDialog : public CEikDialog
 	{
 public:
 	// aTestDialog, aTestFirstLine: the program's Test connection window
-	// (the same resource Connection settings > Test uses)
-	CPgSetupDialog(TInt aTestDialog, TInt aTestFirstLine);
+	// (the same resource Connection settings > Test uses); aQueryDialog:
+	// R_PGSU_QUERY_DIALOG from the program's .rsg, the PsiProxy question
+	// (0: in a query window's title bar, as before)
+	CPgSetupDialog(TInt aTestDialog, TInt aTestFirstLine, TInt aQueryDialog = 0);
 	// ETrue for a new user: neither PsiLink.ini nor the program's own
 	// settings file (aAppIni) is there. Anyone with settings from any of
 	// the programs is not asked.
@@ -267,14 +322,33 @@ private:
 	void ReadChoice();
 	void ShowChoiceL();
 	void TestL();
+	TBool AskPrivacyL();
 	TInt iTestDialog;
 	TInt iTestFirstLine;
+	TInt iQueryDialog;
 	PgSuChoice iChoice;
+	};
+
+// (22 November 2026) A question with its explanation in the dialog, not in
+// its title bar: the fact (bold), why (an annotation), then the question;
+// No and Yes (r_pgsu_query_dialog). ETrue for Yes
+class CPgSuQueryDialog : public CEikDialog
+	{
+public:
+	// aDialog: R_PGSU_QUERY_DIALOG (pgsetup.rssi) from the program's .rsg
+	static TBool AskL(TInt aDialog, const TDesC& aTitle, const TDesC& aFact, const TDesC& aWhy, const TDesC& aQuestion);
+private:
+	CPgSuQueryDialog(const TDesC& aFact, const TDesC& aWhy, const TDesC& aQuestion)
+		: iFact(aFact), iWhy(aWhy), iQuestion(aQuestion) {}
+	void PreLayoutDynInitL();
+	const TDesC& iFact;
+	const TDesC& iWhy;
+	const TDesC& iQuestion;
 	};
 
 // Runs the assistant from aDialog (a DIALOG built from pgsetup.rssi's
 // pages). ETrue if it was confirmed (the settings are saved).
-TBool PgSetupRunL(TInt aDialog, TInt aTestDialog, TInt aTestFirstLine);
+TBool PgSetupRunL(TInt aDialog, TInt aTestDialog, TInt aTestFirstLine, TInt aQueryDialog = 0);
 #endif
 
 #endif

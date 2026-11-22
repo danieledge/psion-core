@@ -14,6 +14,9 @@ enum TPgSetupControls
 	EPgSuDlgHelperNote,      //   ...the annotation under it
 	EPgSuDlgHost,            //   Helper's address
 	EPgSuDlgPort,            //   Port
+	EPgSuDlgQueryFact = 0x7c08,   // the PsiProxy question (CPgSuQueryDialog): the fact,
+	EPgSuDlgQueryWhy,             //   why (an annotation),
+	EPgSuDlgQueryQuestion,        //   then the question
 	EPgSuBidTest = 0x7c40    // the Test button (Ctrl+T)
 	};
 

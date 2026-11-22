@@ -6,6 +6,7 @@
 #include <eikenv.h>
 #include <eikdialg.h>
 #include <eikdialg.hrh>
+#include <eikcmds.hrh>
 #include <eikchlst.h>
 #include <eiklabel.h>
 #include <eikedwin.h>
@@ -43,8 +44,8 @@ static void PgSuText(TDes& aOut, const char* aText)
 	aOut.Copy(p.Left(p.Length() < aOut.MaxLength() ? p.Length() : aOut.MaxLength()));
 	}
 
-CPgSetupDialog::CPgSetupDialog(TInt aTestDialog, TInt aTestFirstLine)
-	: iTestDialog(aTestDialog), iTestFirstLine(aTestFirstLine)
+CPgSetupDialog::CPgSetupDialog(TInt aTestDialog, TInt aTestFirstLine, TInt aQueryDialog)
+	: iTestDialog(aTestDialog), iTestFirstLine(aTestFirstLine), iQueryDialog(aQueryDialog)
 	{
 	iTall = Tall();
 	iHadFile = EFalse;
@@ -185,17 +186,17 @@ TBool CPgSetupDialog::OkToExitL(TInt aButtonId)
 		}
 	if (!AppOkToExitL())
 		return EFalse;
-	// plain HTTP from the Psion to the computer: said once, before it is used
-	if (pg_su_needs_privacy_query(&iChoice)
-		&& !iEikonEnv->QueryWinL(_L("Pages and passwords cross your network unencrypted"),
-			_L("Use PsiProxy on this network?")))
-		return EFalse;
 	RFs& fs = iCoeEnv->FsSession();
 	TPsiLink link;
 	link.SetDefaults();
-	link.Load(fs);
+	TBool had = link.Load(fs);
 	PgSuLink l;
 	PgSuToLink(link, l);
+	// plain HTTP from the Psion to the computer: said once, before it is
+	// used - only for a PsiProxy new to the settings (22 November 2026: it
+	// was asked at every OK, with nothing changed)
+	if (pg_su_privacy_query_due(&iChoice, &l, had) && !AskPrivacyL())
+		return EFalse;
 	pg_su_to_link(&iChoice, &l);
 	PgSuFromLink(l, link);
 	link.Save(fs);
@@ -203,8 +204,40 @@ TBool CPgSetupDialog::OkToExitL(TInt aButtonId)
 	return ETrue;
 	}
 
-TBool PgSetupRunL(TInt aDialog, TInt aTestDialog, TInt aTestFirstLine)
+// The question, in the program's query dialog (pgsetup.rssi's
+// r_pgsu_query_dialog) when it gave one; else as before, in a query window
+TBool CPgSetupDialog::AskPrivacyL()
 	{
-	CPgSetupDialog* d = new(ELeave) CPgSetupDialog(aTestDialog, aTestFirstLine);
+	TBuf<PG_SU_QUERY_WHY_MAX> why;
+	char w[PG_SU_QUERY_WHY_MAX + 1];
+	pg_su_query_why(&iChoice, w);
+	PgSuText(why, w);
+	TBuf<64> fact, question, title;
+	PgSuText(fact, PG_SU_QUERY_FACT);
+	PgSuText(question, PG_SU_QUERY_QUESTION);
+	PgSuText(title, PG_SU_QUERY_TITLE);
+	if (iQueryDialog)
+		return CPgSuQueryDialog::AskL(iQueryDialog, title, fact, why, question);
+	return iEikonEnv->QueryWinL(fact, question);
+	}
+
+TBool CPgSuQueryDialog::AskL(TInt aDialog, const TDesC& aTitle, const TDesC& aFact, const TDesC& aWhy, const TDesC& aQuestion)
+	{
+	CPgSuQueryDialog* d = new(ELeave) CPgSuQueryDialog(aFact, aWhy, aQuestion);
+	d->PrepareLC(aDialog);
+	d->SetTitleL(aTitle);
+	return d->RunLD() == EEikBidYes;
+	}
+
+void CPgSuQueryDialog::PreLayoutDynInitL()
+	{
+	SetLabelL(EPgSuDlgQueryFact, iFact);
+	SetLabelL(EPgSuDlgQueryWhy, iWhy);
+	SetLabelL(EPgSuDlgQueryQuestion, iQuestion);
+	}
+
+TBool PgSetupRunL(TInt aDialog, TInt aTestDialog, TInt aTestFirstLine, TInt aQueryDialog)
+	{
+	CPgSetupDialog* d = new(ELeave) CPgSetupDialog(aTestDialog, aTestFirstLine, aQueryDialog);
 	return d->ExecuteLD(aDialog);
 	}

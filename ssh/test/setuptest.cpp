@@ -89,6 +89,52 @@ int main()
 	c.helper = PG_SU_HELPER_DIRECT;
 	CHECK(!pg_su_needs_privacy_query(&c) && pg_su_address_dimmed(&c));
 
+	// (22 November 2026) the PsiProxy question only when PsiProxy on a
+	// computer is new to the settings, as PsiWeb 1.03 asks it
+	{
+	PgSuLink was = Link(1, 4, 1, "10.0.0.9", 8081);
+	PgSuChoice p;
+	pg_su_from_link(&was, 1, 1, &p);
+	CHECK(p.helper == PG_SU_HELPER_PSIPROXY);
+	CHECK(!pg_su_privacy_query_due(&p, &was, 1));            // OK with nothing changed: not asked
+	CHECK(pg_su_privacy_query_due(&p, &was, 0));             // no PsiLink.ini yet: asked
+	strcpy(p.host, "10.0.0.10");
+	CHECK(pg_su_privacy_query_due(&p, &was, 1));             // another address: asked
+	strcpy(p.host, "10.0.0.9"); p.port = 8082;
+	CHECK(pg_su_privacy_query_due(&p, &was, 1));             // another port: asked
+	p.port = 8081;
+	strcpy(was.host, "10.0.0.9"); was.use_proxy = 0;
+	CHECK(pg_su_privacy_query_due(&p, &was, 1));             // from Direct (the address kept): asked
+	p.helper = PG_SU_HELPER_DIRECT;
+	CHECK(!pg_su_privacy_query_due(&p, &was, 0));            // Direct: never
+	was = Link(1, 4, 1, "10.0.0.9", 8081);
+	p.helper = PG_SU_HELPER_PSIPROXY; p.conn = PG_SU_CONN_MODEM; p.baud_index = 2;
+	CHECK(!pg_su_privacy_query_due(&p, &was, 1));            // another way online, the same PsiProxy: not asked
+	PgSuLink atom = Link(0, 4, 1, "psiproxy", 8080);
+	PgSuChoice a;
+	pg_su_from_link(&atom, 1, 1, &a);
+	CHECK(a.helper == PG_SU_HELPER_ATOM && !pg_su_privacy_query_due(&a, &atom, 1));
+	a.helper = PG_SU_HELPER_PSIPROXY;
+	CHECK(!pg_su_privacy_query_due(&a, &atom, 1));           // through the Atom: the same settings as its helper
+
+	// its words: why names the address, cut to 24, and fits the label
+	char w[PG_SU_QUERY_WHY_MAX + 1];
+	p.conn = PG_SU_CONN_NET; strcpy(p.host, "192.168.7.10");
+	pg_su_query_why(&p, w);
+	CHECK(!strcmp(w, "Between this Psion and PsiProxy at 192.168.7.10 - fine at home, not on public WiFi"));
+	strcpy(p.host, "a-very-long-host-name-for-psiproxy.example.org");
+	pg_su_query_why(&p, w);
+	CHECK(!strcmp(w, "Between this Psion and PsiProxy at a-very-long-host-name-fo - fine at home, not on public WiFi"));
+	CHECK(strlen(w) <= PG_SU_QUERY_WHY_MAX && strlen(PG_SU_QUERY_WHY_LONGEST) <= PG_SU_QUERY_WHY_MAX);
+	memset(p.host, 'x', PG_SU_HOST_MAX); p.host[PG_SU_HOST_MAX] = 0;
+	pg_su_query_why(&p, w);
+	CHECK(strlen(w) <= PG_SU_QUERY_WHY_MAX);
+	p.conn = PG_SU_CONN_ATOM;
+	pg_su_query_why(&p, w);
+	CHECK(!strcmp(w, "Between the Atom modem and PsiProxy - fine at home, not on public WiFi"));
+	CHECK(strlen(PG_SU_QUERY_FACT) < 64 && strlen(PG_SU_QUERY_QUESTION) < 64 && strlen(PG_SU_QUERY_TITLE) < 64);
+	}
+
 	// speed only for another modem
 	c.conn = PG_SU_CONN_NET; CHECK(pg_su_baud_dimmed(&c));
 	c.conn = PG_SU_CONN_ATOM; CHECK(pg_su_baud_dimmed(&c));

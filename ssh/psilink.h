@@ -363,6 +363,19 @@ inline TBool PsiHoldRunning()
 	return find.Next(name) == KErrNone;
 	}
 
+// (22 November 2026) A program's connection through a modem on the serial
+// port (the Atom modem route: no PPP, nothing NIFMAN knows of) is open:
+// psiglue holds a global semaphore of this name from the modem's CONNECT
+// until the hang-up, and the kernel removes it when the engine ends.
+// Looking for it opens nothing (Coda's toolbar asks at each tick)
+_LIT(KPsiModemLinkName, "PsiModemLink");
+inline TBool PsiModemLinkUp()
+	{
+	TFindSemaphore find(_L("*PsiModemLink"));
+	TFullName name;
+	return find.Next(name) == KErrNone;
+	}
+
 // Is the Psion's Internet connection up, by NIFMAN's account? 1 yes, 0 no,
 // -1 it would not say (no socket server yet: then nothing is up either).
 inline TInt PsiLinkActive()

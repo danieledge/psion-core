@@ -22,6 +22,9 @@
 //           };
 //       }
 //
+// and gives the assistant its PsiProxy question's dialog (below):
+//   new CPgSetupDialog(R_XX_TEST_DIALOG, EXxDlgTest1, R_PGSU_QUERY_DIALOG)
+//
 // The words of the choices are in psilink.rh; the annotations, which change
 // with the choice, are in pgsetup.cpp (a label's resource text is only the
 // longest of them, so the dialog is the same size whatever is chosen).
@@ -88,5 +91,29 @@ RESOURCE DLG_BUTTONS r_pgsu_buttons
 		DLG_BUTTON { id=EPgSuBidTest; button=CMBUT { txt="Test"; }; hotkey='T'; },
 		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
 		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// (22 November 2026) The PsiProxy question (CPgSuQueryDialog), asked on OK
+// only when PsiProxy on a computer is new to the settings. Its words are in
+// the dialog, not its title bar: the fact in bold, why as an annotation
+// under it, then the question, last, before No and Yes (Esc is No, Enter is
+// not Yes). The labels hold the longest text they take (pgsetup.h's
+// PG_SU_QUERY_*), so the dialog has one size whatever it says; a label's
+// reserve_length must be at least anything set in it later (USER 23)
+RESOURCE DIALOG r_pgsu_query_dialog
+	{
+	title="PsiProxy on a computer";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_NO_YES;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgQueryFact; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=64;
+			txt="Pages and passwords cross your network unencrypted"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgQueryWhy; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			horiz_align=EEikLabelAlignHLeft; reserve_length=110;
+			txt="Between this Psion and PsiProxy at WWWWWWWWWWWWWWW - fine at home, not on public WiFi"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgQueryQuestion; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=64;
+			txt="Use PsiProxy on this network?"; }; }
 		};
 	}
