@@ -18,7 +18,9 @@
 // window was drawn. Now: one file for all the folders to make, as big as
 // they need (a cluster each and one more, in case a name needs a new
 // cluster of its parent), the cluster size measured on the card: three
-// reads of the FAT in all, then one for each folder as before.
+// reads of the FAT in all, then one for each folder as before. (23
+// November) The zeros' file is given its size before they are written, so
+// its clusters cost one read of the FAT, not one for each 32 KB write.
 //
 // Used by psikeep.h (PsiMail, PsiTerm, PsiWeb, PsiSync, Coda's Clips) and
 // Coda's psimkdir.h. Header only (efsrv.lib); nothing leaves; no writable
@@ -73,6 +75,12 @@ static void PsiZeros(RFs& aFs, const TDesC& aFolder, TInt aClusters)
 		if (took.High() == 0 && c >= 512 && c <= (TUint)KPsiZeroClusterMax && (c & (c - 1)) == 0)
 			want = aClusters * (TInt)c;
 		}
+	// (23 November 2026) the rest of the file's clusters given out at once:
+	// one more read of the FAT, not one for each write that needs a new
+	// cluster (fix1118/CF-SPEED-RESEARCH.md); the zeros still go into all
+	// of them. An error here is ignored: the writes grow the file as before
+	if (err == KErrNone && want > 512)
+		f.SetSize(want);
 	for (TInt done = 512; err == KErrNone && done < want; )
 		{
 		TInt n = Min(size, want - done);
