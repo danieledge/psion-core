@@ -207,7 +207,7 @@ static inline int pg_su_privacy_query_due(const PgSuChoice* aC, const PgSuLink* 
 /* the label's size: as wide as the widest text it takes on a 640-pixel
    screen (fifteen W's stand for an address of 24 ordinary letters, as
    measured in PsiWeb 1.03) */
-#define PG_SU_QUERY_WHY_LONGEST "Between this Psion and PsiProxy at WWWWWWWWWWWWWWW - fine at home, not on public WiFi"
+#define PG_SU_QUERY_WHY_LONGEST "Between this Psion and PsiProxy at WWWWWWWWWWWWWWW. Do not use on public WiFi"
 
 /* why, for the choice: through the Atom modem the plain part is the modem's
  * hop to PsiProxy; otherwise the Psion's own, to the address (cut to
@@ -229,7 +229,7 @@ static inline void pg_su_query_why(const PgSuChoice* aC, char* aOut)
 		}
 	while (*a && n < PG_SU_QUERY_WHY_MAX)
 		aOut[n++] = *a++;
-	a = " - fine at home, not on public WiFi";
+	a = ". Do not use on public WiFi";
 	while (*a && n < PG_SU_QUERY_WHY_MAX)
 		aOut[n++] = *a++;
 	aOut[n] = 0;
@@ -245,7 +245,7 @@ static inline const char* pg_su_conn_note(const PgSuChoice* aC, int aTall)
 		return aTall ? "The PC Card network card, or a dial-up, as set in the Control panel"
 		             : "The Psion's own dial-up, as set in the Control panel";
 	case PG_SU_CONN_ATOM:
-		return "The PsiConnect Atom on the serial cable - the Remote link must be off";
+		return "PsiConnect Atom on the serial cable. Turn the Remote link off";
 	default:
 		return "A WiFi modem that dials with ATDT host:port";
 		}
@@ -256,20 +256,20 @@ static inline const char* pg_su_helper_note(const PgSuChoice* aC, int aTall)
 	switch (aC->helper)
 		{
 	case PG_SU_HELPER_DIRECT:
-		return aTall ? "Best with a network card - nobody sees your pages"
-		             : "Private: nobody sees your pages - big sites are slower";
+		return aTall ? "Best with a network card. Pages stay private"
+		             : "Pages stay private. Big sites are slower";
 	case PG_SU_HELPER_ATOM:
-		return "The modem makes pages lighter - it sees your pages";
+		return "The modem makes pages lighter and can see them";
 	default:
 		return aC->conn == PG_SU_CONN_ATOM
-			? "Nothing to set here - the modem knows the helper"   /* (UI-157: no AT commands) */
+			? "Set in the modem - nothing to enter"   /* (UI-157: no AT commands) */
 			: "Fastest - get it at " PG_SU_PSIPROXY_URL;
 		}
 	}
 
 /* The longest annotation of each, for the dialog's fixed size */
-#define PG_SU_CONN_NOTE_LONGEST   "The PsiConnect Atom on the serial cable - the Remote link must be off"
-#define PG_SU_HELPER_NOTE_LONGEST "Private: nobody sees your pages - big sites are slower"
+#define PG_SU_CONN_NOTE_LONGEST   "The PC Card network card, or a dial-up, as set in the Control panel"
+#define PG_SU_HELPER_NOTE_LONGEST "Fastest - get it at " PG_SU_PSIPROXY_URL
 
 /* The route in plain words, for Page information, About and the start page:
  * "Direct", "Atom modem helper", "PsiProxy on a computer" */

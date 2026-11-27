@@ -72,11 +72,11 @@ so what the dialog shows is what the program uses.
 `pg_su_conn_note`, `pg_su_helper_note`):
 
 - Network card or dial-up: "The PC Card network card, or a dial-up, as set in the Control panel" (netBook); "The Psion's own dial-up, as set in the Control panel" (5mx)
-- Atom modem: "The PsiConnect Atom on the serial cable - the Remote link must be off"
+- Atom modem: "PsiConnect Atom on the serial cable. Turn the Remote link off"
 - Other WiFi modem: "A WiFi modem that dials with ATDT host:port"
-- Direct: "Best with a network card - nobody sees your pages" (netBook); "Private: nobody sees your pages - big sites are slower" (5mx)
-- Atom modem helper: "The modem makes pages lighter - it sees your pages"
-- PsiProxy on a computer: "Fastest - get it at github.com/danieledge/psiproxy"; through the Atom: "Set PsiProxy's address in the modem (AT$PU) - nothing to set here"
+- Direct: "Best with a network card. Pages stay private" (netBook); "Pages stay private. Big sites are slower" (5mx)
+- Atom modem helper: "The modem makes pages lighter and can see them"
+- PsiProxy on a computer: "Fastest - get it at github.com/danieledge/psiproxy"; through the Atom: "Set in the modem - nothing to enter"
 
 **On OK.** PsiProxy chosen with no address: infoprint "No address entered",
 the cursor to that line. PsiProxy on a computer chosen and **new to the
@@ -85,9 +85,9 @@ and port; `pg_su_privacy_query_due`): a question in a dialog of its own
 (`CPgSuQueryDialog`, pgsetup.rssi's `r_pgsu_query_dialog`, which the
 program passes as the constructor's third argument): title "PsiProxy on a
 computer"; in bold "Pages and passwords cross your network unencrypted";
-as an annotation why, "Between this Psion and PsiProxy at 192.168.7.10 -
-fine at home, not on public WiFi" (through the Atom modem: "Between the
-Atom modem and PsiProxy - ..."); then "Use PsiProxy on this network?",
+as an annotation why, "Between this Psion and PsiProxy at 192.168.7.10.
+Do not use on public WiFi" (through the Atom modem: "Between the
+Atom modem and PsiProxy. ..."); then "Use PsiProxy on this network?",
 No and Yes (Esc is No; No keeps the dialog). OK with nothing changed, or
 after another change, does not ask again (22 November 2026; it asked at
 every OK). A program that passes no dialog gets the question in a query

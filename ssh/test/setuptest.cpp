@@ -121,17 +121,17 @@ int main()
 	char w[PG_SU_QUERY_WHY_MAX + 1];
 	p.conn = PG_SU_CONN_NET; strcpy(p.host, "192.168.7.10");
 	pg_su_query_why(&p, w);
-	CHECK(!strcmp(w, "Between this Psion and PsiProxy at 192.168.7.10 - fine at home, not on public WiFi"));
+	CHECK(!strcmp(w, "Between this Psion and PsiProxy at 192.168.7.10. Do not use on public WiFi"));
 	strcpy(p.host, "a-very-long-host-name-for-psiproxy.example.org");
 	pg_su_query_why(&p, w);
-	CHECK(!strcmp(w, "Between this Psion and PsiProxy at a-very-long-host-name-fo - fine at home, not on public WiFi"));
+	CHECK(!strcmp(w, "Between this Psion and PsiProxy at a-very-long-host-name-fo. Do not use on public WiFi"));
 	CHECK(strlen(w) <= PG_SU_QUERY_WHY_MAX && strlen(PG_SU_QUERY_WHY_LONGEST) <= PG_SU_QUERY_WHY_MAX);
 	memset(p.host, 'x', PG_SU_HOST_MAX); p.host[PG_SU_HOST_MAX] = 0;
 	pg_su_query_why(&p, w);
 	CHECK(strlen(w) <= PG_SU_QUERY_WHY_MAX);
 	p.conn = PG_SU_CONN_ATOM;
 	pg_su_query_why(&p, w);
-	CHECK(!strcmp(w, "Between the Atom modem and PsiProxy - fine at home, not on public WiFi"));
+	CHECK(!strcmp(w, "Between the Atom modem and PsiProxy. Do not use on public WiFi"));
 	CHECK(strlen(PG_SU_QUERY_FACT) < 64 && strlen(PG_SU_QUERY_QUESTION) < 64 && strlen(PG_SU_QUERY_TITLE) < 64);
 	}
 

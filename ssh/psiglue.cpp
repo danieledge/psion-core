@@ -3030,7 +3030,7 @@ static int PppDial(char* aResult, int aResultMax)
 		// the last attempt's request never completed, even after closing
 		// the session: leave ESOCK alone rather than pile a second one on
 		// (and no other waits happen while one is out - see WaitFor)
-		SetMsg(aResult, aResultMax, "The Psion's Internet connection is still busy with the last attempt - wait a moment and try again");
+		SetMsg(aResult, aResultMax, "The Internet connection is still busy - try again in a moment");
 		return -1;
 		}
 	// The last TCP connection, if a caller left it open (a close without
@@ -3936,7 +3936,7 @@ static void LtReportNet(PgLinkTest* aT)
 	else if (aT->net_up == 1)
 		LtSay1(aT, "The Psion's Internet connection is up");
 	else if (aT->net_up < 0)
-		LtSay1(aT, "The Psion would not say whether its Internet connection is up");
+		LtSay1(aT, "Cannot tell whether the Internet connection is up");
 	if (aT->dns == 0)
 		{
 		char a[20];
