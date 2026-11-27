@@ -1631,7 +1631,7 @@ static int NetConnect(char* aResult, int aMax)
 		// Only this connection failed: keep the link and its session as a
 		// closed connection leaves them, and no fail-hold - the next request
 		// (PsiWeb's next picture, the page after) goes straight out. It was
-		// "The Psion's Internet connection failed a moment ago" for 8 s. A
+		// "The last Internet connection failed" for 8 s. A
 		// -34 while the link is not up (the dial-up's own failure) is still
 		// a failed start.
 		if (gConnStat.Int() == KErrCouldNotConnect && (gLinkProven || LinkUp() == 1))
@@ -3021,7 +3021,7 @@ static int PppDial(char* aResult, int aResultMax)
 	// per picture. (NetFailDead drops the hold, so its one retry gets here.)
 	if (gLinkFailAt != TInt64(0) && NowMicro() - gLinkFailAt < KLinkFailHoldUs)
 		{
-		SetMsg(aResult, aResultMax, "The Psion's Internet connection failed a moment ago - try again in a few seconds");
+		SetMsg(aResult, aResultMax, "The last Internet connection failed. Try again in a few seconds");
 		return -1;
 		}
 	ReapOrphans(0);

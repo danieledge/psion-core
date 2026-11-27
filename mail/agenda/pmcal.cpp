@@ -2040,15 +2040,15 @@ void CPmCalSync::FinishL()
 	else
 		msg = _L("Agenda up to date");
 	if (iSent)
-		msg.AppendFormat(_L("; sending %d change%s"), iSent, iSent == 1 ? _S("") : _S("s"));
+		msg.AppendFormat(_L(". Sending %d change%s"), iSent, iSent == 1 ? _S("") : _S("s"));
 	if (iFailed)
-		msg.AppendFormat(_L("; %d not accepted by the server"), iFailed);
+		msg.AppendFormat(_L(". %d not accepted by the server"), iFailed);
 	if (iKept)
-		msg.AppendFormat(_L("; %d changed on both: the Psion's kept as a copy"), iKept);
+		msg.AppendFormat(_L(". %d changed on both. The Psion's kept as a copy"), iKept);
 	if (iGuarded)
-		msg.Append(_L("; many events gone from the server - none removed from the Agenda"));
+		msg.Append(_L(". Many events gone from the server. None removed from the Agenda"));
 	if (iGuardedOut)
-		msg.Append(_L("; many entries gone from the Agenda - none deleted on the server"));
+		msg.Append(_L(". Many entries gone from the Agenda. None deleted on the server"));
 	Close();
 	Reset();
 	iPhase = EIdle;

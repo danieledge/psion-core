@@ -675,13 +675,13 @@ TInt PmCardSync::Run(RFs& aFs, const TDesC& aDir, TBool aCopyExisting, MPmCalObs
 		else
 			sum = _L("Contacts up to date");
 		if (pass->iSent)
-			sum.AppendFormat(_L("; sending %d"), pass->iSent);
+			sum.AppendFormat(_L(". Sending %d"), pass->iSent);
 		if (pass->iKept)
-			sum.AppendFormat(_L("; %d changed on both: the Psion's kept"), pass->iKept);
+			sum.AppendFormat(_L(". %d changed on both. The Psion's kept"), pass->iKept);
 		if (pass->iGuarded)
-			sum.Append(_L("; many gone from the server - none removed"));
+			sum.Append(_L(". Many gone from the server. None removed"));
 		if (pass->iGuardedOut)
-			sum.Append(_L("; many gone from Contacts - none deleted on the server"));
+			sum.Append(_L(". Many gone from Contacts. None deleted on the server"));
 		aSummary.Copy(sum.Left(Min(sum.Length(), aSummary.MaxLength())));
 		aPushed = pass->iSent > 0;
 		}
