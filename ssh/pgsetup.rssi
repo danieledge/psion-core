@@ -57,7 +57,7 @@ RESOURCE ARRAY r_pgsu_helper_lines
 			control=CHOICELIST { maxdisplaychar=16; array_id=r_pgsu_helper_array; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPgSuDlgHelperNote; control=LABEL { standard_font=EEikLabelFontAnnotation;
 			horiz_align=EEikLabelAlignHLeft; reserve_length=72;
-			txt="Fastest - get it at github.com/danieledge/psiproxy"; }; },
+			txt="Fastest. Get it at github.com/danieledge/psiproxy"; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt=PSILINK_TXT_HELPER_HOST; id=EPgSuDlgHost;
 			control=EDWIN { width=18; maxlength=60; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPgSuDlgPort;

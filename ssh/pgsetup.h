@@ -263,13 +263,13 @@ static inline const char* pg_su_helper_note(const PgSuChoice* aC, int aTall)
 	default:
 		return aC->conn == PG_SU_CONN_ATOM
 			? "Set in the modem - nothing to enter"   /* (UI-157: no AT commands) */
-			: "Fastest - get it at " PG_SU_PSIPROXY_URL;
+			: "Fastest. Get it at " PG_SU_PSIPROXY_URL;
 		}
 	}
 
 /* The longest annotation of each, for the dialog's fixed size */
 #define PG_SU_CONN_NOTE_LONGEST   "The PC Card network card, or a dial-up, as set in the Control panel"
-#define PG_SU_HELPER_NOTE_LONGEST "Fastest - get it at " PG_SU_PSIPROXY_URL
+#define PG_SU_HELPER_NOTE_LONGEST "Fastest. Get it at " PG_SU_PSIPROXY_URL
 
 /* The route in plain words, for Page information, About and the start page:
  * "Direct", "Atom modem helper", "PsiProxy on a computer" */

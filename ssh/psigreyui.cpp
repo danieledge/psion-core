@@ -383,7 +383,7 @@ void CPsiGreyScreen::DrawChoices(CWindowGc& aGc) const
 	else
 		aGc.DrawText(_L("1-4: choose   Up/Down: lighter/darker   Enter: save   Esc: close   A: detailed   Del: reset"),
 			TPoint(4, hy));
-	aGc.DrawText(_L("Look at the doorway and the tree (dark), the clouds (light) and the ball (smooth)"),
+	aGc.DrawText(_L("Check the dark doorway and tree, the light clouds and the smooth ball"),
 		TPoint(4, hy - small->HeightInPixels() - 3));
 	aGc.DiscardFont();
 	}
